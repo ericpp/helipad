@@ -8,7 +8,8 @@ use lnrpc::lnrpc::{
     lightning_client::LightningClient, AddInvoiceResponse, ChannelBalanceRequest,
     ChannelBalanceResponse, Invoice, ListPaymentsRequest, ListPaymentsResponse, PayReq,
     PayReqString, PaymentHash, SendRequest, SendResponse, WalletBalanceRequest,
-    WalletBalanceResponse, ListInvoiceRequest, ListInvoiceResponse, GetInfoRequest, GetInfoResponse
+    WalletBalanceResponse, ListInvoiceRequest, ListInvoiceResponse, GetInfoRequest, GetInfoResponse,
+    InvoiceSubscription,
 };
 use openssl::{
     error::ErrorStack,
@@ -21,7 +22,7 @@ use tonic::{
     metadata::{errors::InvalidMetadataValue, Ascii, MetadataValue},
     service::Interceptor,
     transport::{Channel, Endpoint},
-    Response, Status,
+    Response, Status, Streaming,
 };
 
 #[derive(Debug, Clone)]
@@ -221,6 +222,20 @@ impl Lnd {
     pub async fn wallet_balance(&mut self) -> Result<WalletBalanceResponse, Status> {
         self.lightning_client
             .wallet_balance(WalletBalanceRequest {})
+            .await
+            .map(Response::into_inner)
+    }
+
+    pub async fn subscribe_invoices(
+        &mut self,
+        add_index: u64,
+        settle_index: u64,
+    ) -> Result<Streaming<Invoice>, Status> {
+        self.lightning_client
+            .subscribe_invoices(InvoiceSubscription {
+                add_index,
+                settle_index,
+            })
             .await
             .map(Response::into_inner)
     }

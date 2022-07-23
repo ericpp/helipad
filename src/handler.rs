@@ -413,6 +413,33 @@ pub async fn api_v1_index(_ctx: Context) -> Response {
     };
 }
 
+pub async fn api_v1_stats(_ctx: Context) -> Response {
+    //Get query parameters
+    let _params: HashMap<String, String> = _ctx.req.uri().query().map(|v| {
+        url::form_urlencoded::parse(v.as_bytes()).into_owned().collect()
+    }).unwrap_or_else(HashMap::new);
+
+    //Get the boosts from db for returning
+    match dbif::get_wallet_balance_from_db(&_ctx.database_file_path) {
+        Ok(balance) => {
+            let json_doc = serde_json::to_string_pretty(&balance).unwrap();
+
+            return hyper::Response::builder()
+                .status(StatusCode::OK)
+                .header("Access-Control-Allow-Origin", "*")
+                .body(format!("{}", json_doc).into())
+                .unwrap();
+        }
+        Err(e) => {
+            eprintln!("** Error getting balance: {}.\n", e);
+            return hyper::Response::builder()
+                .status(StatusCode::from_u16(500).unwrap())
+                .body(format!("** Error getting balance.").into())
+                .unwrap();
+        }
+    }
+}
+
 //CSV export - max is 200 for now so the csv content can be built in memory
 pub async fn csv_export_boosts(_ctx: Context) -> Response {
     //Get query parameters

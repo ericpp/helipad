@@ -501,6 +501,108 @@ async fn lnd_poller(server_config: Config, database_file_path: String) {
             }
         }
 
+
+        //Get a list of invoices
+        println!("\nSubscribing to LND invoice notifications...");
+
+        match lnd::Lnd::subscribe_invoices(&mut lightning, 0, current_index.clone()).await { // Result<tonic::codec::decode::Streaming<Invoice>, tonic::status::Status>
+            Ok(mut response) => { // tonic::codec::decode::Streaming<Invoice>
+                if let Some(invoice) = response.message().await.unwrap() {
+                    println!("{:?}", invoice);
+
+                    if invoice.settle_date == 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        continue
+                    }
+
+                    //Initialize a boost record
+                    let mut boost = dbif::BoostRecord {
+                        index: invoice.add_index,
+                        time: invoice.settle_date,
+                        value_msat: invoice.amt_paid_sat * 1000,
+                        value_msat_total: invoice.amt_paid_sat * 1000,
+                        action: 0,
+                        sender: "".to_string(),
+                        app: "".to_string(),
+                        message: "".to_string(),
+                        podcast: "".to_string(),
+                        episode: "".to_string(),
+                        tlv: "".to_string(),
+                    };
+
+                    //Search for podcast boost tlvs
+                    for htlc in invoice.htlcs {
+                        for (idx, val) in htlc.custom_records {
+                            //Satoshis.stream record type
+                            if idx == 7629169 {
+                                boost.tlv = std::str::from_utf8(&val).unwrap().to_string();
+                                let tlv = std::str::from_utf8(&val).unwrap();
+                                println!("TLV: {:#?}", tlv);
+                                let json_result = serde_json::from_str::<RawBoost>(tlv);
+                                match json_result {
+                                    Ok(rawboost) => {
+                                        println!("{:#?}", rawboost);
+                                        //If there was a sat value in the tlv, override the invoice
+                                        if rawboost.value_msat.is_some() {
+                                            boost.value_msat = rawboost.value_msat.unwrap() as i64;
+                                        }
+                                        //Determine an action type for later filtering ability
+                                        if rawboost.action.is_some() {
+                                            boost.action = match rawboost.action.unwrap().as_str() {
+                                                "stream" => 1, //This indicates a per-minute podcast payment
+                                                "boost" => 2,  //This is a manual boost or boost-a-gram
+                                                _ => 3,
+                                            }
+                                        }
+                                        //Was a sender name given in the tlv?
+                                        if rawboost.sender_name.is_some() && !rawboost.sender_name.clone().unwrap().is_empty() {
+                                            boost.sender = rawboost.sender_name.unwrap();
+                                        }
+                                        //Was there a message in this tlv?
+                                        if rawboost.message.is_some() {
+                                            boost.message = rawboost.message.unwrap();
+                                        }
+                                        //Was an app name given?
+                                        if rawboost.app_name.is_some() {
+                                            boost.app = rawboost.app_name.unwrap();
+                                        }
+                                        //Was a podcast name given?
+                                        if rawboost.podcast.is_some() {
+                                            boost.podcast = rawboost.podcast.unwrap();
+                                        }
+                                        //Episode name?
+                                        if rawboost.episode.is_some() {
+                                            boost.episode = rawboost.episode.unwrap();
+                                        }
+                                        //Look for an original sat value in the tlv
+                                        if rawboost.value_msat_total.is_some() {
+                                            boost.value_msat_total = rawboost.value_msat_total.unwrap() as i64;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    //Give some output
+                    println!("Boost: {:#?}", boost);
+
+                    //Store in the database
+                    println!("{:#?}", boost);
+                    match dbif::add_invoice_to_db(&db_filepath, boost) {
+                        Ok(_) => println!("New invoice added."),
+                        Err(e) => eprintln!("Error adding invoice: {:#?}", e)
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("lnd::Lnd::list_invoices failed: {}", e);
+            }
+        }
+
         //Get a list of invoices
         match lnd::Lnd::list_invoices(&mut lightning, false, current_index.clone(), 500, false).await {
             Ok(response) => {
