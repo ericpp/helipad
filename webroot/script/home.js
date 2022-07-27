@@ -222,6 +222,9 @@ $(document).ready(function () {
                         if (shouldPew) {
                             //Pew pew pew!
                             pewAudio.play();
+                            setTimeout(() => {
+                                readBoost(element);
+                            }, 500);
                         }
                     }
                 });
@@ -257,6 +260,19 @@ $(document).ready(function () {
                 }
             }
         });
+    }
+
+    function readBoost(element) {
+        let actualSats = Math.trunc(element.value_msat / 1000) || 0;
+        let sender = element.sender
+
+        if ((pos = sender.indexOf('@')) !== -1) {
+            sender = sender.substr(0, pos);
+        }
+
+        var msg = new SpeechSynthesisUtterance();
+        msg.text = `${actualSats} sat boost from ${sender} using the ${element.app} app: ${element.message || ''}`
+        window.speechSynthesis.speak(msg);
     }
 
     //Animate some confetti on the page with a given duration interval in milliseconds
