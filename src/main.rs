@@ -13,6 +13,7 @@ use std::fs;
 use std::env;
 use drop_root::set_user_group;
 use lnd;
+use lnd::lnrpc::lnrpc::{SendRequest, SendResponse};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use dbif::add_wallet_balance_to_db;
@@ -22,6 +23,10 @@ use reqwest;
 use reqwest::header::USER_AGENT;
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use rand::RngCore;
+use sha2::{Sha256, Digest};
+use data_encoding::HEXLOWER;
+use std::collections::HashMap;
 
 #[macro_use]
 extern crate configure_me;
@@ -64,6 +69,7 @@ pub struct HelipadConfig {
     pub listen_port: String,
     pub macaroon_path: String,
     pub cert_path: String,
+    pub node_address: String
 }
 
 #[derive(Debug)]
@@ -72,7 +78,7 @@ pub struct Context {
     pub req: Request<Body>,
     pub path: String,
     pub params: Params,
-    pub database_file_path: String,
+    pub helipad_config: HelipadConfig,
     body_bytes: Option<hyper::body::Bytes>,
 }
 
@@ -209,6 +215,7 @@ async fn main() {
         listen_port: "".to_string(),
         macaroon_path: "".to_string(),
         cert_path: "".to_string(),
+        node_address: "".to_string(),
     };
 
     //Bring in the configuration info
@@ -272,9 +279,53 @@ async fn main() {
         }
     }
 
+    //Get the macaroon and cert files.  Look in the local directory first as an override.
+    //If the files are not found in the currect working directory, look for them at their
+    //normal LND directory locations
+    println!("\nDiscovering macaroon file path...");
+    let env_macaroon_path = std::env::var("LND_ADMINMACAROON");
+    //First try from the environment
+    if env_macaroon_path.is_ok() {
+        helipad_config.macaroon_path = env_macaroon_path.unwrap();
+        println!(" - Trying environment var(LND_ADMINMACAROON): [{}]", helipad_config.macaroon_path);
+    } else if server_config.macaroon.is_some() {
+        helipad_config.macaroon_path = server_config.macaroon.unwrap();
+        println!(" - Trying config file({}): [{}]", HELIPAD_CONFIG_FILE, helipad_config.macaroon_path);
+    } else {
+        helipad_config.macaroon_path = "admin.macaroon".to_string();
+        println!(" - Trying current directory: [{}]", helipad_config.macaroon_path);
+    }
+
+    println!("\nDiscovering certificate file path...");
+    let env_cert_path = std::env::var("LND_TLSCERT");
+    if env_cert_path.is_ok() {
+        helipad_config.cert_path = env_cert_path.unwrap();
+        println!(" - Trying environment var(LND_TLSCERT): [{}]", helipad_config.cert_path);
+    } else if server_config.cert.is_some() {
+        helipad_config.cert_path = server_config.cert.unwrap();
+        println!(" - Trying config file({}): [{}]", HELIPAD_CONFIG_FILE, helipad_config.cert_path);
+    } else {
+        helipad_config.cert_path = "tls.cert".to_string();
+        println!(" - Trying current directory: [{}]", helipad_config.cert_path);
+    }
+
+    //Get the url connection string of the lnd node
+    println!("\nDiscovering LND node address...");
+    let env_lnd_url = std::env::var("LND_URL");
+    if env_lnd_url.is_ok() {
+        helipad_config.node_address = "https://".to_owned() + env_lnd_url.unwrap().as_str();
+        println!(" - Trying environment var(LND_URL): [{}]", helipad_config.node_address);
+    } else if server_config.lnd_url.is_some() {
+        helipad_config.node_address = server_config.lnd_url.unwrap();
+        println!(" - Trying config file({}): [{}]", HELIPAD_CONFIG_FILE, helipad_config.node_address);
+    } else {
+        helipad_config.node_address = String::from(LND_STANDARD_GRPC_URL);
+        println!(" - Trying localhost default: [{}].", helipad_config.node_address);
+    }
+
     //Start the LND polling thread.  This thread will poll LND every few seconds to
     //get the latest invoices and store them in the database.
-    tokio::spawn(lnd_poller(server_config, helipad_config.database_file_path.clone()));
+    tokio::spawn(lnd_poller(helipad_config.clone()));
 
     //Router
     let some_state = "state".to_string();
@@ -307,11 +358,13 @@ async fn main() {
     router.get("/api/v1/index", Box::new(handler::api_v1_index));
     router.options("/api/v1/sent_index", Box::new(handler::api_v1_sent_index_options));
     router.get("/api/v1/sent_index", Box::new(handler::api_v1_sent_index));
+    router.options("/api/v1/reply", Box::new(handler::api_v1_reply_options));
+    router.post("/api/v1/reply", Box::new(handler::api_v1_reply));
     router.get("/csv", Box::new(handler::csv_export_boosts));
 
 
     let shared_router = Arc::new(router);
-    let db_filepath: String = helipad_config.database_file_path.clone();
+    let hp_config = helipad_config.clone();
     let new_service = make_service_fn(move |conn: &AddrStream| {
         let app_state = AppState {
             state_thing: some_state.clone(),
@@ -319,12 +372,11 @@ async fn main() {
             version: version.to_string(),
         };
 
-        let database_file_path = db_filepath.clone();
-
+        let helipad_config = hp_config.clone();
         let router_capture = shared_router.clone();
         async {
             Ok::<_, Error>(service_fn(move |req| {
-                route(router_capture.clone(), req, app_state.clone(), database_file_path.clone())
+                route(router_capture.clone(), req, app_state.clone(), helipad_config.clone())
             }))
         }
     });
@@ -359,25 +411,25 @@ async fn route(
     router: Arc<Router>,
     req: Request<hyper::Body>,
     app_state: AppState,
-    database_file_path: String,
+    helipad_config: HelipadConfig,
 ) -> Result<Response, Error> {
     let found_handler = router.route(req.uri().path(), req.method());
     let path = req.uri().path().to_owned();
     let resp = found_handler
         .handler
-        .invoke(Context::new(app_state, req, &path, found_handler.params, database_file_path))
+        .invoke(Context::new(app_state, req, &path, found_handler.params, helipad_config))
         .await;
     Ok(resp)
 }
 
 impl Context {
-    pub fn new(state: AppState, reqbody: Request<Body>, path: &str, params: Params, database_file_path: String) -> Context {
+    pub fn new(state: AppState, reqbody: Request<Body>, path: &str, params: Params, helipad_config: HelipadConfig) -> Context {
         Context {
             state: state,
             req: reqbody,
             path: path.to_string(),
             params: params,
-            database_file_path: database_file_path,
+            helipad_config: helipad_config,
             body_bytes: None,
         }
     }
@@ -544,69 +596,15 @@ async fn parse_podcast_tlv(boost: &mut dbif::BoostRecord, val: &Vec<u8>, remote_
     }
 }
 
-//The LND poller runs in a thread and pulls new invoices
-async fn lnd_poller(server_config: Config, database_file_path: String) {
-    let db_filepath = database_file_path;
-
-    //Get the macaroon and cert files.  Look in the local directory first as an override.
-    //If the files are not found in the currect working directory, look for them at their
-    //normal LND directory locations
-    println!("\nDiscovering macaroon file path...");
-    let macaroon_path;
-    let env_macaroon_path = std::env::var("LND_ADMINMACAROON");
-    //First try from the environment
-    if env_macaroon_path.is_ok() {
-        macaroon_path = env_macaroon_path.unwrap();
-        println!(" - Trying environment var(LND_ADMINMACAROON): [{}]", macaroon_path);
-    } else if server_config.macaroon.is_some() {
-        macaroon_path = server_config.macaroon.unwrap();
-        println!(" - Trying config file({}): [{}]", HELIPAD_CONFIG_FILE, macaroon_path);
-    } else {
-        macaroon_path = "admin.macaroon".to_string();
-        println!(" - Trying current directory: [{}]", macaroon_path);
-    }
-    let macaroon: Vec<u8>;
-    match fs::read(macaroon_path.clone()) {
-        Ok(macaroon_content) => {
-            println!(" - Success.");
-            macaroon = macaroon_content;
-        }
-        Err(_) => {
-            println!(" - Error reading macaroon from: [{}]", macaroon_path);
-            println!(" - Last fallback attempt: [{}]", LND_STANDARD_MACAROON_LOCATION);
-            match fs::read(LND_STANDARD_MACAROON_LOCATION) {
-                Ok(macaroon_content) => {
-                    macaroon = macaroon_content;
-                }
-                Err(_) => {
-                    eprintln!("Cannot find a valid admin.macaroon file");
-                    std::process::exit(1);
-                }
-            }
-        }
-    }
-
-    println!("\nDiscovering certificate file path...");
-    let cert_path;
-    let env_cert_path = std::env::var("LND_TLSCERT");
-    if env_cert_path.is_ok() {
-        cert_path = env_cert_path.unwrap();
-        println!(" - Trying environment var(LND_TLSCERT): [{}]", cert_path);
-    } else if server_config.cert.is_some() {
-        cert_path = server_config.cert.unwrap();
-        println!(" - Trying config file({}): [{}]", HELIPAD_CONFIG_FILE, cert_path);
-    } else {
-        cert_path = "tls.cert".to_string();
-        println!(" - Trying current directory: [{}]", cert_path);
-    }
+async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
     let cert: Vec<u8>;
-    match fs::read(cert_path.clone()) {
+    match fs::read(helipad_config.cert_path.clone()) {
         Ok(cert_content) => {
-            println!(" - Success.");
+            // println!(" - Success.");
             cert = cert_content;
         }
         Err(_) => {
-            println!(" - Error reading certificate from: [{}]", cert_path);
+            println!(" - Error reading certificate from: [{}]", helipad_config.cert_path);
             println!(" - Last fallback attempt: [{}]", LND_STANDARD_TLSCERT_LOCATION);
             match fs::read(LND_STANDARD_TLSCERT_LOCATION) {
                 Ok(cert_content) => {
@@ -614,37 +612,105 @@ async fn lnd_poller(server_config: Config, database_file_path: String) {
                 }
                 Err(_) => {
                     eprintln!("Cannot find a valid tls.cert file");
-                    std::process::exit(2);
+                    return None;
                 }
             }
         }
     }
 
-    //Get the url connection string of the lnd node
-    println!("\nDiscovering LND node address...");
-    let node_address;
-    let env_lnd_url = std::env::var("LND_URL");
-    if env_lnd_url.is_ok() {
-        node_address = "https://".to_owned() + env_lnd_url.unwrap().as_str();
-        println!(" - Trying environment var(LND_URL): [{}]", node_address);
-    } else if server_config.lnd_url.is_some() {
-        node_address = server_config.lnd_url.unwrap();
-        println!(" - Trying config file({}): [{}]", HELIPAD_CONFIG_FILE, node_address);
-    } else {
-        node_address = String::from(LND_STANDARD_GRPC_URL);
-        println!(" - Trying localhost default: [{}].", node_address);
+    let macaroon: Vec<u8>;
+    match fs::read(helipad_config.macaroon_path.clone()) {
+        Ok(macaroon_content) => {
+            // println!(" - Success.");
+            macaroon = macaroon_content;
+        }
+        Err(_) => {
+            println!(" - Error reading macaroon from: [{}]", helipad_config.macaroon_path);
+            println!(" - Last fallback attempt: [{}]", LND_STANDARD_MACAROON_LOCATION);
+            match fs::read(LND_STANDARD_MACAROON_LOCATION) {
+                Ok(macaroon_content) => {
+                    macaroon = macaroon_content;
+                }
+                Err(_) => {
+                    eprintln!("Cannot find a valid admin.macaroon file");
+                    return None;
+                }
+            }
+        }
     }
 
     //Make the connection to LND
+    let lightning = lnd::Lnd::connect_with_macaroon(helipad_config.node_address.clone(), &cert, &macaroon).await;
+
+    if lightning.is_err() {
+        println!("Could not connect to: [{}] using tls: [{}] and macaroon: [{}]", helipad_config.node_address, helipad_config.cert_path, helipad_config.macaroon_path);
+        eprintln!("{:#?}", lightning.err());
+        return None;
+    }
+
+    return lightning.ok();
+}
+
+async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, amt: i64, tlv: Value) -> Option<SendResponse> {
+    let raw_pub_key = HEXLOWER.decode(pub_key.as_bytes()).unwrap();
+
+    // generate 32 random bytes for pre_image
+    let mut pre_image = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut pre_image);
+
+    // and convert to sha256 hash
+    let mut hasher = Sha256::new();
+    hasher.update(pre_image);
+    let payment_hash = hasher.finalize();
+
+    let tlv_json = serde_json::to_string_pretty(&tlv).unwrap();
+
+    // thanks to BOL:
+    // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
+    // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
+
+    let dest_custom_records: HashMap<u64, Vec<u8>> = {
+        let mut map = HashMap::new();
+        map.insert(5482373484, pre_image.to_vec());
+        map.insert(7629169, tlv_json.as_bytes().to_vec());
+        map
+    };
+
+    let req = SendRequest {
+        dest: raw_pub_key.clone(),
+        amt: amt,
+        payment_hash: payment_hash.to_vec(),
+        dest_custom_records: dest_custom_records,
+        ..Default::default()
+    };
+
+    println!(
+        "** Sending boost: pub_key={:#?} raw_pub_key={:#?} amt={:#?} pre_image={:#?} payment_hash={:#?} req={:#?} tlv_json={:#?}",
+        pub_key,
+        raw_pub_key,
+        amt,
+        pre_image,
+        payment_hash.to_vec(),
+        req,
+        tlv_json
+    );
+
+    return lnd::Lnd::send_payment_sync(&mut lightning, req).await.ok();
+}
+
+//The LND poller runs in a thread and pulls new invoices
+async fn lnd_poller(helipad_config: HelipadConfig) {
+    let db_filepath = helipad_config.database_file_path.clone();
+
+    //Make the connection to LND
+    println!("\nConnecting to LND node address...");
     let mut lightning;
-    match lnd::Lnd::connect_with_macaroon(node_address.clone(), &cert, &macaroon).await {
-        Ok(lndconn) => {
+    match connect_to_lnd(helipad_config.clone()).await {
+        Some(lndconn) => {
             println!(" - Success.");
             lightning = lndconn;
         }
-        Err(e) => {
-            println!("Could not connect to: [{}] using tls: [{}] and macaroon: [{}]", node_address, cert_path, macaroon_path);
-            eprintln!("{:#?}", e);
+        None => {
             std::process::exit(1);
         }
     }

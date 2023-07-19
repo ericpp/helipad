@@ -1,15 +1,15 @@
-use crate::{Context, Response};
+use crate::{Context, Request, Body, Response, connect_to_lnd, send_boost};
 use hyper::StatusCode;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::str;
 use voca_rs::*;
 use handlebars::Handlebars;
 use serde_json::json;
 use chrono::{NaiveDateTime};
 use dbif::BoostRecord;
-
 
 //Constants --------------------------------------------------------------------------------------------------
 const WEBROOT_PATH_HTML: &str = "webroot/html";
@@ -30,6 +30,48 @@ impl fmt::Display for HydraError {
 
 impl Error for HydraError {}
 
+//Helper functions
+async fn get_post_params(req: Request<Body>) -> HashMap<String, String> {
+    let full_body = hyper::body::to_bytes(req.into_body()).await.unwrap();
+    let body_str = str::from_utf8(&full_body).unwrap();
+    let body_params = url::form_urlencoded::parse(body_str.as_bytes());
+
+    return body_params
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+}
+
+fn client_error_response(message: String) -> Response {
+    return hyper::Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(message.into())
+        .unwrap();
+}
+
+fn server_error_response(message: String) -> Response {
+    return hyper::Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .body(message.into())
+        .unwrap();
+}
+
+fn json_response<T: serde::Serialize>(value: T) -> Response {
+    let json_doc = serde_json::to_string_pretty(&value).unwrap();
+    return hyper::Response::builder()
+        .status(StatusCode::OK)
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Content-Type", "application/json; charset=UTF-8")
+        .body(format!("{}", json_doc).into())
+        .unwrap();
+}
+
+fn options_response(options: String) -> Response {
+    return hyper::Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header("Access-Control-Allow-Methods", options)
+        .body(format!("").into())
+        .unwrap();
+}
 
 //Route handlers ---------------------------------------------------------------------------------------------
 
@@ -201,7 +243,7 @@ pub async fn api_v1_balance(_ctx: Context) -> Response {
     }).unwrap_or_else(HashMap::new);
 
     //Get the boosts from db for returning
-    match dbif::get_wallet_balance_from_db(&_ctx.database_file_path) {
+    match dbif::get_wallet_balance_from_db(&_ctx.helipad_config.database_file_path) {
         Ok(balance) => {
             let json_doc = serde_json::to_string_pretty(&balance).unwrap();
 
@@ -298,7 +340,7 @@ pub async fn api_v1_boosts(_ctx: Context) -> Response {
     };
 
     //Get the boosts from db for returning
-    match dbif::get_boosts_from_db(&_ctx.database_file_path, index, boostcount, old, true) {
+    match dbif::get_boosts_from_db(&_ctx.helipad_config.database_file_path, index, boostcount, old, true) {
         Ok(boosts) => {
             let json_doc = serde_json::to_string_pretty(&boosts).unwrap();
 
@@ -395,7 +437,7 @@ pub async fn api_v1_streams(_ctx: Context) -> Response {
     };
 
     //Get the boosts from db for returning
-    match dbif::get_streams_from_db(&_ctx.database_file_path, index, boostcount, old) {
+    match dbif::get_streams_from_db(&_ctx.helipad_config.database_file_path, index, boostcount, old) {
         Ok(streams) => {
             let json_doc_raw = serde_json::to_string_pretty(&streams).unwrap();
             let json_doc: String = strip::strip_tags(&json_doc_raw);
@@ -428,7 +470,7 @@ pub async fn api_v1_index_options(_ctx: Context) -> Response {
 pub async fn api_v1_index(_ctx: Context) -> Response {
 
     //Get the last known invoice index from the database
-    match dbif::get_last_boost_index_from_db(&_ctx.database_file_path) {
+    match dbif::get_last_boost_index_from_db(&_ctx.helipad_config.database_file_path) {
         Ok(index) => {
             println!("** get_last_boost_index_from_db() -> [{}]", index);
             let json_doc_raw = serde_json::to_string_pretty(&index).unwrap();
@@ -582,6 +624,72 @@ pub async fn api_v1_sent(_ctx: Context) -> Response {
     }
 }
 
+pub async fn api_v1_reply_options(_ctx: Context) -> Response {
+    return options_response("POST, OPTIONS".to_string())
+}
+
+pub async fn api_v1_reply(_ctx: Context) -> Response {
+    let post_vars = get_post_params(_ctx.req).await;
+
+    for key in ["index", "sender", "sats", "message"] {
+        let value = match post_vars.get(key) {
+            Some(value) => value,
+            None => ""
+        };
+
+        if value == "" {
+            return client_error_response(format!("** No {} specified.", key));
+        }
+    }
+
+    let lightning = match connect_to_lnd(_ctx.helipad_config.clone()).await {
+        Some(lndconn) => lndconn,
+        None => {
+            return server_error_response("** Error connecting to LND.".to_string())
+        }
+    };
+
+    let index = post_vars.get("index").unwrap().parse().unwrap();
+    let amt = post_vars.get("sats").unwrap().parse().unwrap();
+    let sender = post_vars.get("sender").unwrap();
+    let message = post_vars.get("message").unwrap();
+
+    let boost = dbif::get_single_boost_from_db(&_ctx.helipad_config.database_file_path, index).unwrap();
+    let tlv = boost.parse_tlv().unwrap();
+
+    let pub_key = &tlv["reply_address"].as_str();
+
+    if pub_key.is_none() {
+        return client_error_response("** No reply_address found in boost".to_string());
+    }
+
+    let reply_tlv = json!({
+        "app_name": "Helipad",
+        "app_version": _ctx.state.version,
+        "podcast": &tlv["podcast"],
+        "episode": &tlv["episode"],
+        "sender_name": sender,
+        "message": message,
+        "action": "boost",
+        "value_msat": amt * 1000,
+        "value_msat_total": amt * 1000,
+    });
+
+    match send_boost(lightning, pub_key.unwrap(), amt, reply_tlv).await {
+        Some(result) => {
+            let js = json!({
+                "success": (result.payment_error == ""),
+                "message": result.payment_error
+            });
+
+            return json_response(js);
+        },
+        None => {
+            return server_error_response("** Error sending boost".to_string())
+        }
+    }
+}
+
 //CSV export - max is 200 for now so the csv content can be built in memory
 pub async fn csv_export_boosts(_ctx: Context) -> Response {
     //Get query parameters
@@ -672,7 +780,7 @@ pub async fn csv_export_boosts(_ctx: Context) -> Response {
     };
 
     //Get the boosts from db for returning
-    match dbif::get_boosts_from_db(&_ctx.database_file_path, index, boostcount, old, false) {
+    match dbif::get_boosts_from_db(&_ctx.helipad_config.database_file_path, index, boostcount, old, false) {
         Ok(boosts) => {
             let mut csv = String::new();
 

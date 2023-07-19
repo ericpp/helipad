@@ -457,6 +457,12 @@ pub fn get_last_boost_index_from_db(filepath: &String) -> Result<u64, Box<dyn Er
     Ok(0)
 }
 
+//Get all of the boosts from the database
+pub fn get_single_boost_from_db(filepath: &String, index: u64) -> Result<BoostRecord, Box<dyn Error>> {
+    let boosts = get_boosts_from_db(filepath, index, 1, false, true)?;
+    return boosts[0];
+}
+
 //Set/Get the wallet balance from the database in sats
 pub fn add_wallet_balance_to_db(filepath: &String, balance: i64) -> Result<bool, Box<dyn Error>> {
     let conn = connect_to_database(false, filepath)?;

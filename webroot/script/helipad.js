@@ -146,11 +146,11 @@ $(document).ready(function () {
                           data-reply-custom-key="${boostReplyCustomKey}"
                           data-reply-custom-value="${boostReplyCustomValue}"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" height="1em" viewBox="0 0 512 512" fill="currentColor">
+                          <svg xmlns="http://www.w3.org/2000/svg" height="1em" viewBox="0 0 512 512" fill="currentColor" style="margin-right: 0.25rem">
                             <!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2023 Fonticons, Inc. -->
-                            <path d="M205 34.8c11.5 5.1 19 16.6 19 29.2v64H336c97.2 0 176 78.8 176 176c0 113.3-81.5 163.9-100.2 174.1c-2.5 1.4-5.3 1.9-8.1 1.9c-10.9 0-19.7-8.9-19.7-19.7c0-7.5 4.3-14.4 9.8-19.5c9.4-8.8 22.2-26.4 22.2-56.7c0-53-43-96-96-96H224v64c0 12.6-7.4 24.1-19 29.2s-25 3-34.4-5.4l-160-144C3.9 225.7 0 217.1 0 208s3.9-17.7 10.6-23.8l160-144c9.4-8.5 22.9-10.6 34.4-5.4z"/>
+                            <path d="M156.6 384.9L125.7 354c-8.5-8.5-11.5-20.8-7.7-32.2c3-8.9 7-20.5 11.8-33.8L24 288c-8.6 0-16.6-4.6-20.9-12.1s-4.2-16.7 .2-24.1l52.5-88.5c13-21.9 36.5-35.3 61.9-35.3l82.3 0c2.4-4 4.8-7.7 7.2-11.3C289.1-4.1 411.1-8.1 483.9 5.3c11.6 2.1 20.6 11.2 22.8 22.8c13.4 72.9 9.3 194.8-111.4 276.7c-3.5 2.4-7.3 4.8-11.3 7.2v82.3c0 25.4-13.4 49-35.3 61.9l-88.5 52.5c-7.4 4.4-16.6 4.5-24.1 .2s-12.1-12.2-12.1-20.9V380.8c-14.1 4.9-26.4 8.9-35.7 11.9c-11.2 3.6-23.4 .5-31.8-7.8zM384 168a40 40 0 1 0 0-80 40 40 0 1 0 0 80z"/>
                           </svg>
-                          Reply
+                          Boost
                         </a>`;
                     }
 
@@ -479,8 +479,8 @@ $(document).ready(function () {
               <div class="modal-body">
                 <form>
                   <div class="form-group row">
-                    <label for="recipient-address" class="col-sm-2 col-form-label">Recipient:</label>
-                    <div id="recipient-address" class="col-sm-10 col-form-label text-truncate">
+                    <label for="recipient-name" class="col-sm-2 col-form-label">Recipient:</label>
+                    <div id="recipient-name" class="col-sm-10 col-form-label text-truncate">
                     </div>
                   </div>
                   <div class="form-group row">
@@ -504,6 +504,7 @@ $(document).ready(function () {
               </div>
               <div class="modal-footer">
                 <input id="reply-index" type="hidden" name="index" value="">
+                <input id="recipient-address" type="hidden" name="recipient-address" value="">
                 <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                 <button id="send-boost-reply" type="button" class="btn btn-primary d-flex align-items-center">
                   <svg xmlns="http://www.w3.org/2000/svg" height="1em" viewBox="0 0 512 512" fill="currentColor" style="margin-right: 0.25rem">
@@ -520,13 +521,15 @@ $(document).ready(function () {
         $dialog.on('show.bs.modal', function (ev) {
             const data = $(ev.relatedTarget).data();
             $dialog.find('#reply-index').val(data.index);
-            $dialog.find('#recipient-address').text(data.replyAddress);
+            $dialog.find('#recipient-address').val(data.replyAddress);
+            $dialog.find('#recipient-name').text(data.replyAddress);
             $dialog.find('#sender-name').val('');
             $dialog.find('#sat-amt').val('');
             $dialog.find('#message-text').val('');
             $dialog.find('#message-chars').text(
                 $dialog.find('#message-text').prop('maxLength')
             );
+            $dialog.find('#send-boost-reply').text('Boost').prop('disabled', false);
         });
 
         $dialog.find('#message-text').on('change keydown keyup', function () {
@@ -534,7 +537,24 @@ $(document).ready(function () {
         });
 
         $dialog.find('#send-boost-reply').click(function () {
-            $(this).text('Boosting')
+            const $btn = $(this);
+            $btn.text('Boosting');
+
+            $.post(`/api/v1/reply`, {
+                // index: $dialog.find('#reply-index').val(),
+                index: $dialog.find('#reply-index').val(),
+                sender: $dialog.find('#sender-name').val(),
+                sats: $dialog.find('#sat-amt').val(),
+                message: $dialog.find('#message-text').val(),
+            }, function (result) {
+                if (!result.success) {
+                    return alert(result.message);
+                }
+
+                $btn.text('Boosted!').prop('disabled', true);
+
+                setTimeout(() => $dialog.modal('hide'), 1000);
+            });
         });
     }
 
