@@ -631,7 +631,7 @@ pub async fn api_v1_reply_options(_ctx: Context) -> Response {
 pub async fn api_v1_reply(_ctx: Context) -> Response {
     let post_vars = get_post_params(_ctx.req).await;
 
-    for key in ["index", "sender", "sats", "message"] {
+    for key in ["index", "sender", "sats"] {
         let value = match post_vars.get(key) {
             Some(value) => value,
             None => ""
@@ -652,7 +652,10 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     let index = post_vars.get("index").unwrap().parse().unwrap();
     let amt = post_vars.get("sats").unwrap().parse().unwrap();
     let sender = post_vars.get("sender").unwrap();
-    let message = post_vars.get("message").unwrap();
+    let message = match post_vars.get("message") {
+        Some(msg) => msg,
+        None => ""
+    };
 
     let boost = dbif::get_single_boost_from_db(&_ctx.helipad_config.database_file_path, index).unwrap();
     let tlv = boost.parse_tlv().unwrap();
