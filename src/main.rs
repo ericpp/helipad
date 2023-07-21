@@ -652,7 +652,7 @@ async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
     return lightning.ok();
 }
 
-async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: &Option<u64>, custom_value: &Option<&str>, amt: i64, tlv: Value) -> Option<SendResponse> {
+async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: &Option<u64>, custom_value: &Option<&str>, sats: i64, tlv: Value) -> Option<SendResponse> {
     // thanks to BOL:
     // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
     // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
@@ -684,17 +684,17 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: &Option<
     // assemble the lnd payment
     let req = SendRequest {
         dest: raw_pub_key.clone(),
-        amt: amt,
+        amt: sats,
         payment_hash: payment_hash.to_vec(),
         dest_custom_records: dest_custom_records,
         ..Default::default()
     };
 
     println!(
-        "** Sending boost: pub_key={:#?} raw_pub_key={:#?} amt={:#?} pre_image={:#?} payment_hash={:#?} req={:#?} tlv_json={:#?}",
+        "** Sending boost: pub_key={:#?} raw_pub_key={:#?} sats={:#?} pre_image={:#?} payment_hash={:#?} req={:#?} tlv_json={:#?}",
         pub_key,
         raw_pub_key,
-        amt,
+        sats,
         pre_image,
         payment_hash.to_vec(),
         req,

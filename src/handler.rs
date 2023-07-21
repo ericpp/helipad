@@ -650,7 +650,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     };
 
     let index = post_vars.get("index").unwrap().parse().unwrap();
-    let amt = post_vars.get("sats").unwrap().parse().unwrap();
+    let sats = post_vars.get("sats").unwrap().parse().unwrap();
     let sender = post_vars.get("sender").unwrap();
     let message = match post_vars.get("message") {
         Some(msg) => msg,
@@ -680,11 +680,11 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         "sender_name": sender,
         "message": message,
         "action": "boost",
-        "value_msat": amt * 1000,
-        "value_msat_total": amt * 1000,
+        "value_msat": sats * 1000,
+        "value_msat_total": sats * 1000,
     });
 
-    match send_boost(lightning, pub_key.unwrap(), custom_key, custom_value, amt, reply_tlv).await {
+    match send_boost(lightning, pub_key.unwrap(), custom_key, custom_value, sats, reply_tlv).await {
         Some(result) => {
             let js = json!({
                 "success": (result.payment_error == ""),
