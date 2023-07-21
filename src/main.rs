@@ -53,6 +53,7 @@ const TLV_PODCASTING20: u64 = 7629169;
 const TLV_WALLET_KEY: u64 = 696969;
 const TLV_WALLET_ID: u64 = 112111100;
 const TLV_HIVE_ACCOUNT: u64 = 818818;
+const TLV_KEYSEND: u64 = 5482373484;
 
 //Structs ----------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------
@@ -651,7 +652,12 @@ async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
     return lightning.ok();
 }
 
-async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, amt: i64, tlv: Value) -> Option<SendResponse> {
+async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: &Option<u64>, custom_value: &Option<&str>, amt: i64, tlv: Value) -> Option<SendResponse> {
+    // thanks to BOL:
+    // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
+    // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
+
+    // convert pub key hash to raw bytes
     let raw_pub_key = HEXLOWER.decode(pub_key.as_bytes()).unwrap();
 
     // generate 32 random bytes for pre_image
@@ -663,19 +669,19 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, amt: i64, tlv: Value
     hasher.update(pre_image);
     let payment_hash = hasher.finalize();
 
+    // TLV custom records
+    // https://github.com/satoshisstream/satoshis.stream/blob/main/TLV_registry.md
+    let mut dest_custom_records = HashMap::new();
     let tlv_json = serde_json::to_string_pretty(&tlv).unwrap();
 
-    // thanks to BOL:
-    // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
-    // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
+    dest_custom_records.insert(TLV_KEYSEND, pre_image.to_vec());
+    dest_custom_records.insert(TLV_PODCASTING20, tlv_json.as_bytes().to_vec());
 
-    let dest_custom_records: HashMap<u64, Vec<u8>> = {
-        let mut map = HashMap::new();
-        map.insert(5482373484, pre_image.to_vec());
-        map.insert(7629169, tlv_json.as_bytes().to_vec());
-        map
-    };
+    if custom_key.is_some() && custom_value.is_some() {
+        dest_custom_records.insert(custom_key.unwrap(), custom_value.unwrap().as_bytes().to_vec());
+    }
 
+    // assemble the lnd payment
     let req = SendRequest {
         dest: raw_pub_key.clone(),
         amt: amt,
@@ -695,6 +701,7 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, amt: i64, tlv: Value
         tlv_json
     );
 
+    // send payment
     return lnd::Lnd::send_payment_sync(&mut lightning, req).await.ok();
 }
 
