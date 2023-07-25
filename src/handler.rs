@@ -632,15 +632,12 @@ pub async fn api_v1_reply_options(_ctx: Context) -> Response {
 pub async fn api_v1_reply(_ctx: Context) -> Response {
     let post_vars = get_post_params(_ctx.req).await;
 
-    for key in ["index", "sender", "sats"] {
-        let value = match post_vars.get(key) {
-            Some(value) => value,
-            None => ""
-        };
+    if post_vars.get("index").unwrap_or(&"".to_string()).is_empty() { // none or empty
+        return client_error_response("** No index specified.".to_string());
+    }
 
-        if value == "" {
-            return client_error_response(format!("** No {} specified.", key));
-        }
+    if post_vars.get("sats").unwrap_or(&"".to_string()).is_empty() { // none or empty
+        return client_error_response("** No sats specified.".to_string());
     }
 
     let lightning = match connect_to_lnd(_ctx.helipad_config.clone()).await {
@@ -652,7 +649,10 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
 
     let index = post_vars.get("index").unwrap().parse().unwrap();
     let sats = post_vars.get("sats").unwrap().parse().unwrap();
-    let sender = post_vars.get("sender").unwrap();
+    let sender = match post_vars.get("sender") {
+        Some(name) => name,
+        None => "Anonymous"
+    };
     let message = match post_vars.get("message") {
         Some(msg) => msg,
         None => ""
