@@ -522,7 +522,7 @@ $(document).ready(function () {
             const data = $(ev.relatedTarget).data();
             $dialog.find('#reply-index').val(data.index);
             $dialog.find('#recipient-address').val(data.replyAddress);
-            $dialog.find('#recipient-name').text(data.replyAddress);
+            $dialog.find('#recipient-name').text('');
             $dialog.find('#sender-name').val('');
             $dialog.find('#sat-amt').val('');
             $dialog.find('#message-text').val('');
@@ -530,6 +530,10 @@ $(document).ready(function () {
                 $dialog.find('#message-text').prop('maxLength')
             );
             $dialog.find('#send-boost-reply').text('Boost').prop('disabled', false);
+
+            $.get(`/api/v1/nodeAlias?pubkey=${data.replyAddress}`, function (result) {
+                $dialog.find('#recipient-name').text(result);
+            })
         });
 
         $dialog.find('#message-text').on('change keydown keyup', function () {

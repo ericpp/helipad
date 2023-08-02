@@ -32,6 +32,12 @@ impl fmt::Display for HydraError {
 impl Error for HydraError {}
 
 //Helper functions
+fn get_query_params(req: Request<Body>) -> HashMap<String, String> {
+    return req.uri().query().map(|v| {
+        url::form_urlencoded::parse(v.as_bytes()).into_owned().collect()
+    }).unwrap_or_else(HashMap::new);
+}
+
 async fn get_post_params(req: Request<Body>) -> HashMap<String, String> {
     let full_body = hyper::body::to_bytes(req.into_body()).await.unwrap();
     let body_str = str::from_utf8(&full_body).unwrap();
@@ -726,6 +732,42 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         }
     }
 }
+
+pub async fn api_v1_node_alias_options(_ctx: Context) -> Response {
+    return options_response("GET, OPTIONS".to_string())
+}
+
+pub async fn api_v1_node_alias(_ctx: Context) -> Response {
+    let query_vars = get_query_params(_ctx.req);
+
+    let pub_key = query_vars.get("pubkey").unwrap_or(&"".to_string()).to_string();
+
+    if pub_key.is_empty() { // none or empty
+        return client_error_response("** No pubkey specified.".to_string());
+    }
+
+    let mut lightning = match connect_to_lnd(_ctx.helipad_config.clone()).await {
+        Some(lndconn) => lndconn,
+        None => {
+            return server_error_response("** Error connecting to LND.".to_string())
+        }
+    };
+
+    let info = match lnd::Lnd::get_node_info(&mut lightning, pub_key, false).await {
+        Ok(ninfo) => ninfo,
+        Err(e) => {
+            eprintln!("** Error getting node info: {}", e);
+            return server_error_response("** Error getting node info".to_string())
+        }
+    };
+
+    if info.node.is_none() {
+        return json_response("");
+    }
+
+    return json_response(info.node.unwrap().alias);
+}
+
 
 //CSV export - max is 200 for now so the csv content can be built in memory
 pub async fn csv_export_boosts(_ctx: Context) -> Response {

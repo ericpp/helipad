@@ -361,6 +361,8 @@ async fn main() {
     router.get("/api/v1/sent_index", Box::new(handler::api_v1_sent_index));
     router.options("/api/v1/reply", Box::new(handler::api_v1_reply_options));
     router.post("/api/v1/reply", Box::new(handler::api_v1_reply));
+    router.options("/api/v1/nodeAlias", Box::new(handler::api_v1_node_alias_options));
+    router.get("/api/v1/nodeAlias", Box::new(handler::api_v1_node_alias));
     router.get("/csv", Box::new(handler::csv_export_boosts));
 
 
