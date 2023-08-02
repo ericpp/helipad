@@ -547,13 +547,13 @@ $(document).ready(function () {
 
         $dialog.find('#send-boost-reply').click(function (event) {
             const $form = $dialog.find('#reply-form');
-
-            if (!$form[0].checkValidity()) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
+            const valid = $form[0].checkValidity()
 
             $form.addClass('was-validated');
+
+            if (!valid) {
+                return;
+            }
 
             const $btn = $(this);
             $btn.text('Boosting').prop('disabled', true);
