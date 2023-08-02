@@ -1,4 +1,4 @@
-use crate::{Context, Request, Body, Response, connect_to_lnd, send_boost};
+use crate::{Context, Request, Body, Response, connect_to_lnd, resolve_lightning_address, send_boost, LnAddressResponse};
 use hyper::StatusCode;
 use std::collections::HashMap;
 use std::error::Error;
@@ -667,12 +667,40 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     let boost = dbif::get_single_boost_from_db(&_ctx.helipad_config.database_file_path, index).unwrap();
     let tlv = boost.parse_tlv().unwrap();
 
-    let pub_key = &tlv["reply_address"].as_str();
-    let custom_key = &tlv["reply_custom_key"].as_u64();
-    let custom_value = &tlv["reply_custom_value"].as_str();
+    let reply_address = tlv["reply_address"].as_str();
+    let mut custom_key = tlv["reply_custom_key"].as_u64();
+    let mut custom_value = tlv["reply_custom_value"].as_str();
 
-    if pub_key.is_none() {
-        return client_error_response("** No reply_address found in boost".to_string());
+    let mut pub_key: &str = match reply_address {
+        Some(addr) => addr,
+        None => {
+            return client_error_response("** No reply_address found in boost".to_string());
+        }
+    };
+
+    let ln_info: LnAddressResponse;
+
+    if pub_key.contains("@") { // pub_key is actually a lightning address
+        ln_info = match resolve_lightning_address(pub_key).await {
+            Ok(addy) => addy,
+            Err(e) => {
+                return server_error_response(format!("** Unable to resolve lightning address: {}", e).to_string());
+            }
+        };
+
+        pub_key = ln_info.pubkey.as_str();
+
+        if ln_info.custom_data.len() > 0 {
+            let ckey_u64 = match ln_info.custom_data[0].custom_key.parse::<u64>() {
+                Ok(val) => val,
+                Err(_) => {
+                    return server_error_response("** Unable to parse lightning address custom key".to_string());
+                }
+            };
+
+            custom_key = Some(ckey_u64);
+            custom_value = Some(ln_info.custom_data[0].custom_value.as_str());
+        }
     }
 
     if custom_key.is_some() && custom_value.is_none() {
@@ -691,14 +719,14 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         "value_msat_total": sats * 1000,
     });
 
-    match send_boost(lightning, pub_key.unwrap(), custom_key, custom_value, sats, reply_tlv.clone()).await {
+    match send_boost(lightning, pub_key, custom_key, custom_value, sats, reply_tlv.clone()).await {
         Some(payment) => {
             let custom_value_string = custom_value.map(|value| value.to_string());
             let payment_hash = HEXLOWER.encode(&payment.payment_hash);
 
             let mut sent_boost = dbif::SentBoostRecord {
-                pubkey: pub_key.unwrap().to_string(),
-                custom_key: *custom_key,
+                pubkey: pub_key.to_string(),
+                custom_key: custom_key,
                 custom_value: custom_value_string,
                 sender: sender.to_string(),
                 message: message.to_string(),
@@ -706,7 +734,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
                 episode: tlv["episode"].as_str().unwrap_or_default().to_string(),
                 total_amt_msat: sats * 1000,
                 total_fees_msat: -1,
-                payment_hash,
+                payment_hash: payment_hash.clone(),
                 reply_boost_index: Some(index),
                 tlv: reply_tlv.to_string(),
             };
@@ -723,7 +751,24 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
                 "message": payment.payment_error
             });
 
-            println!("** Sent boost: {:#?}", payment);
+            if let Some(route) = payment.payment_route {
+                println!("** Boost sent: pub_key={}, custom_key={}, custom_value={}, total_amt_msat={}, total_fees_msat={}, payment_hash={}",
+                    pub_key,
+                    custom_key.unwrap_or_default(),
+                    custom_value.unwrap_or_default(),
+                    route.total_amt_msat,
+                    route.total_fees_msat,
+                    payment_hash,
+                );
+            }
+            else {
+                eprintln!("** Failed to send boost: pub_key={}, custom_key={}, custom_value={}, error={}",
+                    pub_key,
+                    custom_key.unwrap_or_default(),
+                    custom_value.unwrap_or_default(),
+                    payment.payment_error
+                );
+            }
 
             return json_response(js);
         },

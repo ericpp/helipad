@@ -27,6 +27,7 @@ use rand::RngCore;
 use sha2::{Sha256, Digest};
 use data_encoding::HEXLOWER;
 use std::collections::HashMap;
+use email_address;
 
 #[macro_use]
 extern crate configure_me;
@@ -654,7 +655,70 @@ async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
     return lightning.ok();
 }
 
-async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: &Option<u64>, custom_value: &Option<&str>, sats: i64, tlv: Value) -> Option<SendResponse> {
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LnAddressResponse {
+    status: String,
+    tag: String,
+    pubkey: String,
+    custom_data: Vec<LnAddressCustomData>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct LnAddressCustomData {
+    custom_key: String,
+    custom_value: String,
+}
+
+#[derive(Debug)]
+struct LnAddressError(String);
+
+impl std::fmt::Display for LnAddressError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "There is an error: {}", self.0)
+    }
+}
+
+impl std::error::Error for LnAddressError {}
+
+async fn resolve_lightning_address(address: &str) -> Result<LnAddressResponse, Error> {
+    if !address.contains('@') {
+        return Err(Box::new(LnAddressError("Invalid lightning address".to_string())));
+    }
+
+    if !email_address::EmailAddress::is_valid(address) {
+        return Err(Box::new(LnAddressError("Invalid lightning address".to_string())));
+    }
+
+    let parts: Vec<&str> = address.split('@').collect();
+
+    if parts.len() != 2 {
+        return Err(Box::new(LnAddressError("Invalid lightning address".to_string())));
+    }
+
+    let url = format!("https://{}/.well-known/keysend/{}", parts[1], parts[0]);
+    println!("Resolving Lightning Address {} through {}", address, url);
+
+    let response = reqwest::get(url.clone()).await?.text().await?;
+    let data: LnAddressResponse = serde_json::from_str(&response)?;
+
+    if data.custom_data.len() > 0 {
+        println!("Lightning Address {}: pub_key={}, custom_key={}, custom_value={}",
+            address,
+            data.pubkey,
+            data.custom_data[0].custom_key,
+            data.custom_data[0].custom_value,
+        );
+    }
+    else {
+        println!("Lightning Address {}: pub_key={}", address, data.pubkey);
+    }
+
+    return Ok(data);
+}
+
+async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Option<SendResponse> {
     // thanks to BOL:
     // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
     // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
@@ -691,17 +755,6 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: &Option<
         dest_custom_records: dest_custom_records,
         ..Default::default()
     };
-
-    println!(
-        "** Sending boost: pub_key={:#?} raw_pub_key={:#?} sats={:#?} pre_image={:#?} payment_hash={:#?} req={:#?} tlv_json={:#?}",
-        pub_key,
-        raw_pub_key,
-        sats,
-        pre_image,
-        payment_hash.to_vec(),
-        req,
-        tlv_json
-    );
 
     // send payment
     return lnd::Lnd::send_payment_sync(&mut lightning, req).await.ok();
