@@ -718,7 +718,7 @@ async fn resolve_lightning_address(address: &str) -> Result<LnAddressResponse, E
     return Ok(data);
 }
 
-async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Option<SendResponse> {
+async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Result<SendResponse, String> {
     // thanks to BOL:
     // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
     // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
@@ -757,7 +757,10 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u
     };
 
     // send payment
-    return lnd::Lnd::send_payment_sync(&mut lightning, req).await.ok();
+    match lnd::Lnd::send_payment_sync(&mut lightning, req).await {
+        Ok(payment) => Ok(payment),
+        Err(e) => Err(e.message().to_string())
+    }
 }
 
 //The LND poller runs in a thread and pulls new invoices

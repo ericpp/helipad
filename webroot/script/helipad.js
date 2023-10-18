@@ -138,7 +138,7 @@ $(document).ready(function () {
                         <a
                           href="#"
                           class="btn btn-sm btn-outline-primary pull-right position-relative"
-                          style="top: -5px; display: inline-flex; align-items: center;"
+                          style="display: inline-flex; align-items: center;"
                           data-toggle="modal"
                           data-target="#replyModal"
                           data-index="${boostIndex}"
@@ -502,7 +502,7 @@ $(document).ready(function () {
                   <div class="form-group row">
                     <label for="sat-amt" class="col-sm-2 col-form-label">Sats:</label>
                     <div class="col-sm-10">
-                      <input type="number" class="form-control w-auto" id="sat-amt" placeholder="sats" required>
+                      <input type="number" class="form-control w-auto" id="sat-amt" placeholder="sats" min="1" required>
                       <div class="invalid-feedback">
                         Please enter the number of sats to send.
                       </div>

@@ -720,7 +720,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     });
 
     match send_boost(lightning, pub_key, custom_key, custom_value, sats, reply_tlv.clone()).await {
-        Some(payment) => {
+        Ok(payment) => {
             let custom_value_string = custom_value.map(|value| value.to_string());
             let payment_hash = HEXLOWER.encode(&payment.payment_hash);
 
@@ -772,8 +772,9 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
 
             return json_response(js);
         },
-        None => {
-            return server_error_response("** Error sending boost".to_string())
+        Err(e) => {
+            eprintln!("** Error sending boost: {}", e);
+            return server_error_response(format!("** Error sending boost: {}", e))
         }
     }
 }
