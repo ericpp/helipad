@@ -746,6 +746,8 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
 
             dbif::add_sent_boost_to_db(&_ctx.helipad_config.database_file_path, sent_boost).unwrap();
 
+            println!("Payment: {:#?}", payment);
+
             let js = json!({
                 "success": payment.payment_error.is_empty(),
                 "message": payment.payment_error

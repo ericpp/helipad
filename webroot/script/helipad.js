@@ -576,6 +576,7 @@ $(document).ready(function () {
                 message: $dialog.find('#message-text').val(),
             }, function (result) {
                 if (!result.success) {
+                    $btn.text('Boost').prop('disabled', false);
                     return alert(result.message);
                 }
 
