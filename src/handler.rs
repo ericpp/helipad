@@ -715,7 +715,6 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         "sender_name": sender,
         "message": message,
         "action": "boost",
-        "value_msat": sats * 1000,
         "value_msat_total": sats * 1000,
     });
 
