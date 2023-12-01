@@ -32,12 +32,6 @@ impl fmt::Display for HydraError {
 impl Error for HydraError {}
 
 //Helper functions
-fn get_query_params(req: Request<Body>) -> HashMap<String, String> {
-    return req.uri().query().map(|v| {
-        url::form_urlencoded::parse(v.as_bytes()).into_owned().collect()
-    }).unwrap_or_else(HashMap::new);
-}
-
 async fn get_post_params(req: Request<Body>) -> HashMap<String, String> {
     let full_body = hyper::body::to_bytes(req.into_body()).await.unwrap();
     let body_str = str::from_utf8(&full_body).unwrap();
@@ -510,7 +504,7 @@ pub async fn api_v1_sent_index_options(_ctx: Context) -> Response {
 
 pub async fn api_v1_sent_index(_ctx: Context) -> Response {
     //Get the last known payment index from the database
-    match dbif::get_last_payment_index_from_db(&_ctx.database_file_path) {
+    match dbif::get_last_payment_index_from_db(&_ctx.helipad_config.database_file_path) {
         Ok(index) => {
             println!("** get_last_payment_index_from_db() -> [{}]", index);
             let json_doc_raw = serde_json::to_string_pretty(&index).unwrap();
@@ -610,7 +604,7 @@ pub async fn api_v1_sent(_ctx: Context) -> Response {
     };
 
     //Get sent boosts from db for returning
-    match dbif::get_payments_from_db(&_ctx.database_file_path, index, boostcount, old, true) {
+    match dbif::get_payments_from_db(&_ctx.helipad_config.database_file_path, index, boostcount, old, true) {
         Ok(streams) => {
             let json_doc_raw = serde_json::to_string_pretty(&streams).unwrap();
             let json_doc: String = strip::strip_tags(&json_doc_raw);
@@ -664,7 +658,18 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         None => ""
     };
 
-    let boost = dbif::get_single_boost_from_db(&_ctx.helipad_config.database_file_path, index).unwrap();
+    let boosts = match dbif::get_boosts_from_db(&_ctx.helipad_config.database_file_path, index, 1, false, true) {
+        Ok(items) => items,
+        Err(_) => {
+            return server_error_response("** Error finding boost index.".to_string());
+        }
+    };
+
+    if boosts.is_empty() {
+        return server_error_response("** Unknown boost index.".to_string());
+    }
+
+    let boost = &boosts[0];
     let tlv = boost.parse_tlv().unwrap();
 
     let reply_address = tlv["reply_address"].as_str();
@@ -720,30 +725,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
 
     match send_boost(lightning, pub_key, custom_key, custom_value, sats, reply_tlv.clone()).await {
         Ok(payment) => {
-            let custom_value_string = custom_value.map(|value| value.to_string());
             let payment_hash = HEXLOWER.encode(&payment.payment_hash);
-
-            let mut sent_boost = dbif::SentBoostRecord {
-                pubkey: pub_key.to_string(),
-                custom_key: custom_key,
-                custom_value: custom_value_string,
-                sender: sender.to_string(),
-                message: message.to_string(),
-                podcast: tlv["podcast"].as_str().unwrap_or_default().to_string(),
-                episode: tlv["episode"].as_str().unwrap_or_default().to_string(),
-                total_amt_msat: sats * 1000,
-                total_fees_msat: -1,
-                payment_hash: payment_hash.clone(),
-                reply_boost_index: Some(index),
-                tlv: reply_tlv.to_string(),
-            };
-
-            if let Some(route) = payment.payment_route.clone() {
-                sent_boost.total_amt_msat = route.total_amt_msat;
-                sent_boost.total_fees_msat = route.total_fees_msat;
-            }
-
-            dbif::add_sent_boost_to_db(&_ctx.helipad_config.database_file_path, sent_boost).unwrap();
 
             println!("Payment: {:#?}", payment);
 
@@ -779,42 +761,6 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         }
     }
 }
-
-pub async fn api_v1_node_alias_options(_ctx: Context) -> Response {
-    return options_response("GET, OPTIONS".to_string())
-}
-
-pub async fn api_v1_node_alias(_ctx: Context) -> Response {
-    let query_vars = get_query_params(_ctx.req);
-
-    let pub_key = query_vars.get("pubkey").unwrap_or(&"".to_string()).to_string();
-
-    if pub_key.is_empty() { // none or empty
-        return client_error_response("** No pubkey specified.".to_string());
-    }
-
-    let mut lightning = match connect_to_lnd(_ctx.helipad_config.clone()).await {
-        Some(lndconn) => lndconn,
-        None => {
-            return server_error_response("** Error connecting to LND.".to_string())
-        }
-    };
-
-    let info = match lnd::Lnd::get_node_info(&mut lightning, pub_key, false).await {
-        Ok(ninfo) => ninfo,
-        Err(e) => {
-            eprintln!("** Error getting node info: {}", e);
-            return server_error_response("** Error getting node info".to_string())
-        }
-    };
-
-    if info.node.is_none() {
-        return json_response("");
-    }
-
-    return json_response(info.node.unwrap().alias);
-}
-
 
 //CSV export - max is 200 for now so the csv content can be built in memory
 pub async fn csv_export_boosts(_ctx: Context) -> Response {

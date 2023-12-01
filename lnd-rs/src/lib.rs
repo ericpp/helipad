@@ -8,8 +8,7 @@ use lnrpc::lnrpc::{
     lightning_client::LightningClient, AddInvoiceResponse, ChannelBalanceRequest,
     ChannelBalanceResponse, Invoice, ListPaymentsRequest, ListPaymentsResponse, PayReq,
     PayReqString, PaymentHash, SendRequest, SendResponse, WalletBalanceRequest,
-    WalletBalanceResponse, ListInvoiceRequest, ListInvoiceResponse, GetInfoRequest, GetInfoResponse,
-    NodeInfoRequest, NodeInfo
+    WalletBalanceResponse, ListInvoiceRequest, ListInvoiceResponse, GetInfoRequest, GetInfoResponse
 };
 use openssl::{
     error::ErrorStack,
@@ -222,20 +221,6 @@ impl Lnd {
     pub async fn wallet_balance(&mut self) -> Result<WalletBalanceResponse, Status> {
         self.lightning_client
             .wallet_balance(WalletBalanceRequest {})
-            .await
-            .map(Response::into_inner)
-    }
-
-    pub async fn get_node_info(
-        &mut self,
-        pub_key: String,
-        include_channels: bool
-    ) -> Result<NodeInfo, Status> {
-        self.lightning_client
-            .get_node_info(NodeInfoRequest {
-                pub_key,
-                include_channels,
-            })
             .await
             .map(Response::into_inner)
     }

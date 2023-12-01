@@ -49,22 +49,6 @@ pub struct PaymentRecord {
     pub fee_msat: i64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SentBoostRecord {
-    pub pubkey: String,
-    pub custom_key: Option<u64>,
-    pub custom_value: Option<String>,
-    pub sender: String,
-    pub message: String,
-    pub podcast: String,
-    pub episode: String,
-    pub total_amt_msat: i64,
-    pub total_fees_msat: i64,
-    pub payment_hash: String,
-    pub reply_boost_index: Option<u64>,
-    pub tlv: String,
-}
-
 #[derive(Debug)]
 struct HydraError(String);
 impl fmt::Display for HydraError {
@@ -473,12 +457,6 @@ pub fn get_last_boost_index_from_db(filepath: &String) -> Result<u64, Box<dyn Er
     Ok(0)
 }
 
-//Get all of the boosts from the database
-pub fn get_single_boost_from_db(filepath: &String, index: u64) -> Result<BoostRecord, Box<dyn Error>> {
-    let boosts = get_boosts_from_db(filepath, index, 1, false, true)?;
-    return boosts[0];
-}
-
 //Set/Get the wallet balance from the database in sats
 pub fn add_wallet_balance_to_db(filepath: &String, balance: i64) -> Result<bool, Box<dyn Error>> {
     let conn = connect_to_database(false, filepath)?;
@@ -675,47 +653,7 @@ pub fn add_payment_to_db(filepath: &String, boost: BoostRecord) -> Result<bool, 
             payment_info.fee_msat,
         ]
     ) {
-        Ok(_) => {
-            Ok(true)
-        }
-        Err(e) => {
-            eprintln!("{}", e);
-            return Err(Box::new(HydraError(format!("Failed to add sent boost: [{}].", boost.index).into())))
-        }
-    }
-}
-
-//Add sent boost to the database
-pub fn add_sent_boost_to_db(filepath: &String, sent_boost: SentBoostRecord) -> Result<bool, Box<dyn Error>> {
-    let conn = connect_to_database(false, filepath)?;
-
-    match conn.execute(
-        "INSERT INTO sent_boosts
-            (pubkey, custom_key, custom_value, sender, message, podcast, episode, total_amt_msat, total_fees_msat, payment_hash, reply_boost_idx, tlv)
-        VALUES
-            (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-        ",
-        params![
-            sent_boost.pubkey,
-            sent_boost.custom_key,
-            sent_boost.custom_value,
-            sent_boost.sender,
-            sent_boost.message,
-            sent_boost.podcast,
-            sent_boost.episode,
-            sent_boost.total_amt_msat,
-            sent_boost.total_fees_msat,
-            sent_boost.payment_hash,
-            sent_boost.reply_boost_index,
-            sent_boost.tlv,
-        ]
-    ) {
-        Ok(_) => {
-            Ok(true)
-        }
-        Err(e) => {
-            eprintln!("{}", e);
-            return Err(Box::new(HydraError(format!("Failed to add sent boost: [{}].", sent_boost.pubkey).into())))
-        }
+        Ok(_) => Ok(true),
+        Err(e) => Err(Box::new(e)),
     }
 }
