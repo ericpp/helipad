@@ -639,8 +639,8 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     if post_vars.get("sats").unwrap_or(&"".to_string()).is_empty() { // none or empty
         return client_error_response("** No sats specified.".to_string());
     }
-
-    let lightning = match connect_to_lnd(_ctx.helipad_config.clone()).await {
+    let helipad_config = _ctx.helipad_config.clone();
+    let lightning = match connect_to_lnd(helipad_config.node_address, helipad_config.cert_path, helipad_config.macaroon_path).await {
         Some(lndconn) => lndconn,
         None => {
             return server_error_response("** Error connecting to LND.".to_string())

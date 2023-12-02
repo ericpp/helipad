@@ -598,15 +598,15 @@ async fn parse_podcast_tlv(boost: &mut dbif::BoostRecord, val: &Vec<u8>, remote_
     }
 }
 
-async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
+async fn connect_to_lnd(node_address: String, cert_path: String, macaroon_path: String) -> Option<lnd::Lnd> {
     let cert: Vec<u8>;
-    match fs::read(helipad_config.cert_path.clone()) {
+    match fs::read(cert_path.clone()) {
         Ok(cert_content) => {
             // println!(" - Success.");
             cert = cert_content;
         }
         Err(_) => {
-            println!(" - Error reading certificate from: [{}]", helipad_config.cert_path);
+            println!(" - Error reading certificate from: [{}]", cert_path);
             println!(" - Last fallback attempt: [{}]", LND_STANDARD_TLSCERT_LOCATION);
             match fs::read(LND_STANDARD_TLSCERT_LOCATION) {
                 Ok(cert_content) => {
@@ -621,13 +621,13 @@ async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
     }
 
     let macaroon: Vec<u8>;
-    match fs::read(helipad_config.macaroon_path.clone()) {
+    match fs::read(macaroon_path.clone()) {
         Ok(macaroon_content) => {
             // println!(" - Success.");
             macaroon = macaroon_content;
         }
         Err(_) => {
-            println!(" - Error reading macaroon from: [{}]", helipad_config.macaroon_path);
+            println!(" - Error reading macaroon from: [{}]", macaroon_path);
             println!(" - Last fallback attempt: [{}]", LND_STANDARD_MACAROON_LOCATION);
             match fs::read(LND_STANDARD_MACAROON_LOCATION) {
                 Ok(macaroon_content) => {
@@ -642,10 +642,10 @@ async fn connect_to_lnd(helipad_config: HelipadConfig) -> Option<lnd::Lnd> {
     }
 
     //Make the connection to LND
-    let lightning = lnd::Lnd::connect_with_macaroon(helipad_config.node_address.clone(), &cert, &macaroon).await;
+    let lightning = lnd::Lnd::connect_with_macaroon(node_address.clone(), &cert, &macaroon).await;
 
     if lightning.is_err() {
-        println!("Could not connect to: [{}] using tls: [{}] and macaroon: [{}]", helipad_config.node_address, helipad_config.cert_path, helipad_config.macaroon_path);
+        println!("Could not connect to: [{}] using tls: [{}] and macaroon: [{}]", node_address, cert_path, macaroon_path);
         eprintln!("{:#?}", lightning.err());
         return None;
     }
@@ -768,7 +768,7 @@ async fn lnd_poller(helipad_config: HelipadConfig) {
     //Make the connection to LND
     println!("\nConnecting to LND node address...");
     let mut lightning;
-    match connect_to_lnd(helipad_config.clone()).await {
+    match connect_to_lnd(helipad_config.node_address, helipad_config.cert_path, helipad_config.macaroon_path).await {
         Some(lndconn) => {
             println!(" - Success.");
             lightning = lndconn;
