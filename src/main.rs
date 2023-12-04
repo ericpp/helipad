@@ -716,13 +716,31 @@ async fn resolve_lightning_address(address: &str) -> Result<LnAddressResponse, E
     return Ok(data);
 }
 
-async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Result<SendResponse, String> {
-    // thanks to BOL:
+async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Result<SendResponse, Error> {
+    // thanks to BrianOfLondon and Mostro for keysend details:
     // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
     // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
 
+    let mut real_pub_key = pub_key;
+    let mut real_custom_key = custom_key;
+    let mut real_custom_value = custom_value;
+
+    let ln_info: LnAddressResponse;
+
+    if pub_key.contains("@") { // pub_key is actually a lightning address
+        ln_info = resolve_lightning_address(pub_key).await?;
+
+        real_pub_key = ln_info.pubkey.as_str();
+
+        if ln_info.custom_data.len() > 0 {
+            let ckey_u64 = ln_info.custom_data[0].custom_key.parse::<u64>()?;
+            real_custom_key = Some(ckey_u64);
+            real_custom_value = Some(ln_info.custom_data[0].custom_value.as_str());
+        }
+    }
+
     // convert pub key hash to raw bytes
-    let raw_pub_key = HEXLOWER.decode(pub_key.as_bytes()).unwrap();
+    let raw_pub_key = HEXLOWER.decode(real_pub_key.as_bytes()).unwrap();
 
     // generate 32 random bytes for pre_image
     let mut pre_image = [0u8; 32];
@@ -741,8 +759,8 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u
     dest_custom_records.insert(TLV_KEYSEND, pre_image.to_vec());
     dest_custom_records.insert(TLV_PODCASTING20, tlv_json.as_bytes().to_vec());
 
-    if custom_key.is_some() && custom_value.is_some() {
-        dest_custom_records.insert(custom_key.unwrap(), custom_value.unwrap().as_bytes().to_vec());
+    if real_custom_key.is_some() && real_custom_value.is_some() {
+        dest_custom_records.insert(real_custom_key.unwrap(), real_custom_value.unwrap().as_bytes().to_vec());
     }
 
     // assemble the lnd payment
@@ -757,7 +775,7 @@ async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u
     // send payment
     match lnd::Lnd::send_payment_sync(&mut lightning, req).await {
         Ok(payment) => Ok(payment),
-        Err(e) => Err(e.message().to_string())
+        Err(e) => Err(Box::new(e))
     }
 }
 

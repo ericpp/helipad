@@ -1,4 +1,4 @@
-use crate::{Context, Request, Body, Response, connect_to_lnd, resolve_lightning_address, send_boost, LnAddressResponse};
+use crate::{Context, Request, Body, Response, connect_to_lnd, send_boost};
 use hyper::StatusCode;
 use std::collections::HashMap;
 use std::error::Error;
@@ -672,40 +672,12 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     let boost = &boosts[0];
     let tlv = boost.parse_tlv().unwrap();
 
-    let reply_address = tlv["reply_address"].as_str();
-    let mut custom_key = tlv["reply_custom_key"].as_u64();
-    let mut custom_value = tlv["reply_custom_value"].as_str();
+    let pub_key = tlv["reply_address"].as_str().unwrap_or("".into());
+    let custom_key = tlv["reply_custom_key"].as_u64();
+    let custom_value = tlv["reply_custom_value"].as_str();
 
-    let mut pub_key: &str = match reply_address {
-        Some(addr) => addr,
-        None => {
-            return client_error_response("** No reply_address found in boost".to_string());
-        }
-    };
-
-    let ln_info: LnAddressResponse;
-
-    if pub_key.contains("@") { // pub_key is actually a lightning address
-        ln_info = match resolve_lightning_address(pub_key).await {
-            Ok(addy) => addy,
-            Err(e) => {
-                return server_error_response(format!("** Unable to resolve lightning address: {}", e).to_string());
-            }
-        };
-
-        pub_key = ln_info.pubkey.as_str();
-
-        if ln_info.custom_data.len() > 0 {
-            let ckey_u64 = match ln_info.custom_data[0].custom_key.parse::<u64>() {
-                Ok(val) => val,
-                Err(_) => {
-                    return server_error_response("** Unable to parse lightning address custom key".to_string());
-                }
-            };
-
-            custom_key = Some(ckey_u64);
-            custom_value = Some(ln_info.custom_data[0].custom_value.as_str());
-        }
+    if pub_key == "" {
+        return client_error_response("** No reply_address found in boost".to_string());
     }
 
     if custom_key.is_some() && custom_value.is_none() {
