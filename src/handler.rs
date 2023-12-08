@@ -1,4 +1,5 @@
-use crate::{Context, Request, Body, Response, connect_to_lnd, send_boost};
+use crate::{Context, Request, Body, Response};
+use crate::lightning;
 use hyper::StatusCode;
 use std::collections::HashMap;
 use std::error::Error;
@@ -640,7 +641,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         return client_error_response("** No sats specified.".to_string());
     }
     let helipad_config = _ctx.helipad_config.clone();
-    let lightning = match connect_to_lnd(helipad_config.node_address, helipad_config.cert_path, helipad_config.macaroon_path).await {
+    let lightning = match lightning::connect_to_lnd(helipad_config.node_address, helipad_config.cert_path, helipad_config.macaroon_path).await {
         Some(lndconn) => lndconn,
         None => {
             return server_error_response("** Error connecting to LND.".to_string())
@@ -672,7 +673,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     let boost = &boosts[0];
     let tlv = boost.parse_tlv().unwrap();
 
-    let pub_key = tlv["reply_address"].as_str().unwrap_or("".into());
+    let pub_key = tlv["reply_address"].as_str().unwrap_or_default();
     let custom_key = tlv["reply_custom_key"].as_u64();
     let custom_value = tlv["reply_custom_value"].as_str();
 
@@ -687,15 +688,18 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
     let reply_tlv = json!({
         "app_name": "Helipad",
         "app_version": _ctx.state.version,
-        "podcast": &tlv["podcast"],
-        "episode": &tlv["episode"],
+        "podcast": tlv["podcast"].as_str().unwrap_or_default(),
+        "episode": tlv["episode"].as_str().unwrap_or_default(),
+        "name": tlv["sender_name"].as_str().unwrap_or_default(),
         "sender_name": sender,
         "message": message,
         "action": "boost",
         "value_msat_total": sats * 1000,
     });
 
-    match send_boost(lightning, pub_key, custom_key, custom_value, sats, reply_tlv.clone()).await {
+    println!("** TLV={tlv:#?}, Reply TLV={reply_tlv:#?}");
+
+    match lightning::send_boost(lightning, pub_key, custom_key, custom_value, sats, reply_tlv.clone()).await {
         Ok(payment) => {
             let payment_hash = HEXLOWER.encode(&payment.payment_hash);
 

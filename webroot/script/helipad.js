@@ -20,7 +20,7 @@ $(document).ready(function () {
     }
 
     //Get a boost list starting at a particular invoice index
-    function getBoosts(startIndex, max, scrollToTop, old, shouldPew) {
+    function getBoosts(startIndex, max, scrollToTop, old) {
         var noIndex = false;
 
         //Find newest index
@@ -59,11 +59,6 @@ $(document).ready(function () {
         }
         if (typeof scrollToTop !== "boolean") {
             scrollToTop = true;
-        }
-
-        //Override shouldPew for receiving our first boost
-        if ($('div.nodata').length) {
-            shouldPew = true;
         }
 
         //Build the endpoint url
@@ -236,7 +231,6 @@ $(document).ready(function () {
 
                             } else {
                                 $('div.outgoing_msg[data-msgid=' + closestId + ']').before(elMessage);
-                                shootConfetti(1500);
                             }
 
                         }
@@ -244,11 +238,6 @@ $(document).ready(function () {
                         //Update the tracking array
                         messageIds.push(boostIndex);
                         messageIds = messageIds.sort((a, b) => a - b);
-
-                        if (shouldPew) {
-                            //Pew pew pew!
-                            pewAudio.play();
-                        }
                     }
                 });
 
@@ -328,14 +317,6 @@ $(document).ready(function () {
         }
 
         return numerology;
-    }
-
-    //Animate some confetti on the page with a given duration interval in milliseconds
-    function shootConfetti(time) {
-        startConfetti();
-        setTimeout(function () {
-            stopConfetti();
-        }, time);
     }
 
     //Get the current channel balance from the node
