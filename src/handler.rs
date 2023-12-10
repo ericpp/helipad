@@ -11,7 +11,6 @@ use handlebars::Handlebars;
 use serde_json::json;
 use chrono::{NaiveDateTime};
 use dbif::BoostRecord;
-use data_encoding::HEXLOWER;
 
 //Constants --------------------------------------------------------------------------------------------------
 const WEBROOT_PATH_HTML: &str = "webroot/html";
@@ -694,6 +693,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         "sender_name": sender,
         "message": message,
         "action": "boost",
+        "value_msat": sats * 1000,
         "value_msat_total": sats * 1000,
     });
 
@@ -701,8 +701,6 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
 
     match lightning::send_boost(lightning, pub_key, custom_key, custom_value, sats, reply_tlv.clone()).await {
         Ok(payment) => {
-            let payment_hash = HEXLOWER.encode(&payment.payment_hash);
-
             println!("Payment: {:#?}", payment);
 
             let js = json!({
@@ -711,13 +709,12 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
             });
 
             if let Some(route) = payment.payment_route {
-                println!("** Boost sent: pub_key={}, custom_key={}, custom_value={}, total_amt_msat={}, total_fees_msat={}, payment_hash={}",
+                println!("** Boost sent: pub_key={}, custom_key={}, custom_value={}, total_amt_msat={}, total_fees_msat={}",
                     pub_key,
                     custom_key.unwrap_or_default(),
                     custom_value.unwrap_or_default(),
                     route.total_amt_msat,
                     route.total_fees_msat,
-                    payment_hash,
                 );
             }
             else {
