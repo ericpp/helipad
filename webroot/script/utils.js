@@ -178,3 +178,9 @@ const closest = (arr, num) => {
 const numberFormat = (num) => {
     return new Intl.NumberFormat().format(num);
 }
+
+// Capitalize the first letter in a string
+const ucFirst = (text) => {
+    if (!text) return text;
+    return text.substr(0, 1).toUpperCase() + text.substr(1);
+}
