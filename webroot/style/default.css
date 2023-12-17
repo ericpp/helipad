@@ -320,7 +320,15 @@ div.balanceDisplay span.error {
     color:darkred;
 }
 div.balanceDisplay.bump {
-    background-color: #1e7e34;
+    animation: fade-in 2s;
+}
+@keyframes fade-in {
+    0% {
+        background-color: #1e7e34;
+    }
+    100% {
+        background-color: none;
+    }
 }
 div.piIcon {
     padding-top:8px;
