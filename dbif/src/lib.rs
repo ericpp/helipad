@@ -267,9 +267,8 @@ pub fn add_invoice_to_db(filepath: &String, boost: BoostRecord) -> Result<bool, 
     }
 }
 
-
 //Get all of the boosts from the database
-pub fn get_boosts_from_db(filepath: &String, index: u64, max: u64, direction: bool, escape_html: bool) -> Result<Vec<BoostRecord>, Box<dyn Error>> {
+fn get_boost_records_from_db(filepath: &String, action: u64, index: u64, max: u64, direction: bool, escape_html: bool) -> Result<Vec<BoostRecord>, Box<dyn Error>> {
     let conn = connect_to_database(false, filepath)?;
     let mut boosts: Vec<BoostRecord> = Vec::new();
 
@@ -292,14 +291,18 @@ pub fn get_boosts_from_db(filepath: &String, index: u64, max: u64, direction: bo
                                        remote_podcast, \
                                        remote_episode \
                                  FROM boosts \
-                                 WHERE action = 2 \
+                                 WHERE action = :action \
                                    AND idx {} :index \
                                  ORDER BY idx DESC \
                                  LIMIT :max", ltgt);
 
     //Prepare and execute the query
     let mut stmt = conn.prepare(sqltxt.as_str())?;
-    let rows = stmt.query_map(&[(":index", index.to_string().as_str()), (":max", max.to_string().as_str())], |row| {
+    let rows = stmt.query_map(&[
+        (":action", action.to_string().as_str()),
+        (":index", index.to_string().as_str()),
+        (":max", max.to_string().as_str())
+    ], |row| {
         Ok(BoostRecord {
             index: row.get(0)?,
             time: row.get(1)?,
@@ -352,68 +355,15 @@ pub fn get_boosts_from_db(filepath: &String, index: u64, max: u64, direction: bo
     Ok(boosts)
 }
 
-
 //Get all of the boosts from the database
-pub fn get_streams_from_db(filepath: &String, index: u64, max: u64, direction: bool) -> Result<Vec<BoostRecord>, Box<dyn Error>> {
-    let conn = connect_to_database(false, filepath)?;
-    let mut boosts: Vec<BoostRecord> = Vec::new();
-
-
-    let mut ltgt = ">=";
-    if direction {
-        ltgt = "<=";
-    }
-
-    //Build the query
-    let sqltxt = format!("SELECT idx, \
-                                       time, \
-                                       value_msat, \
-                                       value_msat_total, \
-                                       action, \
-                                       sender, \
-                                       app, \
-                                       message, \
-                                       podcast, \
-                                       episode, \
-                                       tlv, \
-                                       remote_podcast, \
-                                       remote_episode \
-                                 FROM boosts \
-                                 WHERE action = 1 \
-                                   AND idx {} :index \
-                                 ORDER BY idx DESC \
-                                 LIMIT :max", ltgt);
-
-    //Prepare and execute the query
-    let mut stmt = conn.prepare(sqltxt.as_str())?;
-    let rows = stmt.query_map(&[(":index", index.to_string().as_str()), (":max", max.to_string().as_str())], |row| {
-        Ok(BoostRecord {
-            index: row.get(0)?,
-            time: row.get(1)?,
-            value_msat: row.get(2)?,
-            value_msat_total: row.get(3)?,
-            action: row.get(4)?,
-            sender: row.get(5)?,
-            app: row.get(6)?,
-            message: row.get(7)?,
-            podcast: row.get(8)?,
-            episode: row.get(9)?,
-            tlv: row.get(10)?,
-            remote_podcast: row.get(11).ok(),
-            remote_episode: row.get(12).ok(),
-            payment_info: None,
-        })
-    }).unwrap();
-
-    //Parse the results
-    for row in rows {
-        let boost: BoostRecord = row.unwrap();
-        boosts.push(boost);
-    }
-
-    Ok(boosts)
+pub fn get_boosts_from_db(filepath: &String, index: u64, max: u64, direction: bool, escape_html: bool) -> Result<Vec<BoostRecord>, Box<dyn Error>> {
+    get_boost_records_from_db(filepath, 2, index, max, direction, escape_html)
 }
 
+//Get all of the streams from the database
+pub fn get_streams_from_db(filepath: &String, index: u64, max: u64, direction: bool, escape_html: bool) -> Result<Vec<BoostRecord>, Box<dyn Error>> {
+    get_boost_records_from_db(filepath, 1, index, max, direction, escape_html)
+}
 
 //Get the last boost index number from the database
 pub fn get_last_boost_index_from_db(filepath: &String) -> Result<u64, Box<dyn Error>> {
