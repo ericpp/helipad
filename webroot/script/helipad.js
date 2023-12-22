@@ -407,7 +407,7 @@ $(document).ready(function () {
 
     //Render the boost info modal
     function renderBoostInfo() {
-        const name = ucFirst(config.singularName);
+        const name = ucWords(config.singularName);
         const $dialog = $(`
         <div id="boostInfo" class="modal" tabindex="-1">
           <div class="modal-dialog modal-lg modal-dialog-centered">
