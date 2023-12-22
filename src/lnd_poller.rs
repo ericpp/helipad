@@ -404,6 +404,7 @@ pub async fn lnd_poller(helipad_config: HelipadConfig) {
                                 remote_podcast: None,
                                 remote_episode: None,
                                 payment_info: Some(dbif::PaymentRecord {
+                                    payment_hash: payment.payment_hash.clone(),
                                     pubkey: hop.pub_key.clone(),
                                     custom_key: 0,
                                     custom_value: "".into(),
@@ -419,6 +420,7 @@ pub async fn lnd_poller(helipad_config: HelipadConfig) {
                                     let custom_value = std::str::from_utf8(&val).unwrap().to_string();
 
                                     boost.payment_info = Some(dbif::PaymentRecord {
+                                        payment_hash: payment.payment_hash.clone(),
                                         pubkey: hop.pub_key.clone(),
                                         custom_key: idx,
                                         custom_value: custom_value,

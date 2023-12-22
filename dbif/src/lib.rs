@@ -43,6 +43,7 @@ impl BoostRecord {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PaymentRecord {
+    pub payment_hash: String,
     pub pubkey: String,
     pub custom_key: u64,
     pub custom_value: String,
@@ -217,6 +218,7 @@ pub fn create_database(filepath: &String) -> Result<bool, Box<dyn Error>> {
              tlv text,
              remote_podcast text,
              remote_episode text,
+             payment_hash text,
              payment_pubkey text,
              payment_custom_key integer,
              payment_custom_value text,
@@ -469,6 +471,7 @@ pub fn get_payments_from_db(filepath: &String, index: u64, max: u64, direction: 
             tlv,
             remote_podcast,
             remote_episode,
+            payment_hash,
             payment_pubkey,
             payment_custom_key,
             payment_custom_value,
@@ -503,10 +506,11 @@ pub fn get_payments_from_db(filepath: &String, index: u64, max: u64, direction: 
             remote_podcast: row.get(11).ok(),
             remote_episode: row.get(12).ok(),
             payment_info: Some(PaymentRecord {
-                pubkey: row.get(13)?,
-                custom_key: row.get(14)?,
-                custom_value: row.get(15)?,
-                fee_msat: row.get(16)?,
+                payment_hash: row.get(13)?,
+                pubkey: row.get(14)?,
+                custom_key: row.get(15)?,
+                custom_value: row.get(16)?,
+                fee_msat: row.get(17)?,
             }),
         })
     }).unwrap();
@@ -578,10 +582,28 @@ pub fn add_payment_to_db(filepath: &String, boost: BoostRecord) -> Result<bool, 
     };
 
     match conn.execute(
-        "INSERT INTO sent_boosts
-            (idx, time, value_msat, value_msat_total, action, sender, app, message, podcast, episode, tlv, remote_podcast, remote_episode, payment_pubkey, payment_custom_key, payment_custom_value, payment_fee_msat)
+        "INSERT INTO sent_boosts (
+            idx,
+            time,
+            value_msat,
+            value_msat_total,
+            action,
+            sender,
+            app,
+            message,
+            podcast,
+            episode,
+            tlv,
+            remote_podcast,
+            remote_episode,
+            payment_hash,
+            payment_pubkey,
+            payment_custom_key,
+            payment_custom_value,
+            payment_fee_msat
+        )
         VALUES
-            (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ",
         params![
             boost.index,
@@ -597,6 +619,7 @@ pub fn add_payment_to_db(filepath: &String, boost: BoostRecord) -> Result<bool, 
             boost.tlv,
             boost.remote_podcast,
             boost.remote_episode,
+            payment_info.payment_hash,
             payment_info.pubkey,
             payment_info.custom_key,
             payment_info.custom_value,
