@@ -132,7 +132,7 @@ $(document).ready(function () {
                         boostReply = $(`
                             <a
                               href="#"
-                              class="btn btn-sm btn-outline-primary pull-right position-relative"
+                              class="btn btn-sm btn-outline-primary position-relative"
                               style="display: inline-flex; align-items: center;"
                               data-toggle="modal"
                               data-target="#replyModal"
@@ -189,21 +189,21 @@ $(document).ready(function () {
                               <span class="app">
                                 <a href="${appIconHref}"><img src="${appIconUrl}" title="${boostApp}" alt="${boostApp}"></a>
                               </span>
-                              <div>
+                              <div class="pull-right">
                                 <time class="time_date" datetime="${dateTime}" title="${dateFormat(dateTime)}">
                                   <a href="#" style="color: blue" data-toggle="modal" data-target="#boostInfo">
                                     ${prettyDate(dateTime)}
                                   </a>
                                 </time>
-                                <h5 class="sats">
-                                  ${boostDisplayAmount} ${boostPerson} ${boostNumerology}
-                                </h5>
                                 ${boostReply}
-                                <small class="podcast_episode">
-                                  ${boostPodcast} - ${boostEpisode}
-                                  <span class="remote_item">${boostRemoteInfo}</span>
-                                </small>
                               </div>
+                              <h5 class="sats">
+                                ${boostDisplayAmount} ${boostPerson} ${boostNumerology}
+                              </h5>
+                              <small class="podcast_episode">
+                                ${boostPodcast} - ${boostEpisode}
+                                <span class="remote_item">${boostRemoteInfo}</span>
+                              </small>
                               <div style="clear: both">
                                 ${boostMessage}
                               </div>
