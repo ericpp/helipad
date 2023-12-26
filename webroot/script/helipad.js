@@ -189,7 +189,7 @@ $(document).ready(function () {
                               <span class="app">
                                 <a href="${appIconHref}"><img src="${appIconUrl}" title="${boostApp}" alt="${boostApp}"></a>
                               </span>
-                              <div class="pull-right">
+                              <div class="pull-right text-right">
                                 <time class="time_date" datetime="${dateTime}" title="${dateFormat(dateTime)}">
                                   <a href="#" style="color: blue" data-toggle="modal" data-target="#boostInfo">
                                     ${prettyDate(dateTime)}
