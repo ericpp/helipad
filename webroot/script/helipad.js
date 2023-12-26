@@ -544,7 +544,7 @@ $(document).ready(function () {
             const data = $(ev.relatedTarget).data();
             $dialog.find('#reply-index').val(data.index);
             $dialog.find('#recipient-address').val(data.replyAddress);
-            $dialog.find('#recipient-name').text(data.replySender || data.replyAddress);
+            $dialog.find('#recipient-name').text(data.replySender || data.replyAddress).prop('title', `Address: ${data.replyAddress}`);
             $dialog.find('#sender-name').val('');
             $dialog.find('#sat-amt').val('');
             $dialog.find('#message-text').val('');
