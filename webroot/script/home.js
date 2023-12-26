@@ -12,13 +12,9 @@ $(document).ready(function () {
     var currentBalance = null;
     var currentBalanceAmount = 0;
 
-    let config = {
-        'listUrl': '/api/v1/boosts',
-        'indexUrl': '/api/v1/index',
-        'singularName': 'boost',
-        'pluralName': 'boosts',
-        'effects': true,
-    }
+
+    //Initialize the page
+    initPage();
 
     //Get a boost list starting at a particular invoice index
     function getBoosts(startIndex, max, scrollToTop, old, shouldPew) {
@@ -68,17 +64,13 @@ $(document).ready(function () {
         }
 
         //Build the endpoint url
-        let params = {'index': boostIndex};
-
+        var url = '/api/v1/boosts?index=' + boostIndex;
         if (max > 0) {
-            params.count = max;
+            url += '&count=' + max;
         }
-
         if (old) {
-            params.old = true;
+            url += '&old=true';
         }
-
-        let url = config.listUrl + '?' + $.param(params);
 
         $.ajax({
             url: url,
@@ -94,21 +86,16 @@ $(document).ready(function () {
                     let boostActualSats = Math.trunc(element.value_msat / 1000) || 0;
                     let boostIndex = element.index;
                     let boostAction = element.action;
+                    let boostSender = element.sender;
                     let boostApp = element.app;
                     let boostPodcast = element.podcast;
                     let boostEpisode = element.episode;
                     let boostRemotePodcast = element.remote_podcast;
                     let boostRemoteEpisode = element.remote_episode;
-                    let boostTlv = {};
-                    let boostReplyAddress;
-                    let boostReplyCustomKey;
-                    let boostReplyCustomValue;
+                    let boostTlv = null;
 
                     try {
                         boostTlv = JSON.parse(element.tlv)
-                        boostReplyAddress = boostTlv.reply_address;
-                        boostReplyCustomKey = boostTlv.reply_custom_key || '';
-                        boostReplyCustomValue = boostTlv.reply_custom_value || '';
                     }
                     catch {}
 
@@ -117,13 +104,9 @@ $(document).ready(function () {
                     let appIconUrl = appIconUrlBase + (appIcon.icon || 'unknown');
                     let appIconHref = appIcon.url || '#';
 
-                    //Person
-                    let boostPerson = "";
-                    if (config.pluralName == 'sent boosts' && boostTlv.name) {
-                        boostPerson = `sent to ${boostTlv.name}`;
-                    }
-                    else if (element.sender.trim() != "") {
-                        boostPerson = `from ${element.sender}`;
+                    //Sender
+                    if (boostSender.trim() != "") {
+                        boostSender = 'from ' + boostSender;
                     }
 
                     //Format the boost message
@@ -131,33 +114,6 @@ $(document).ready(function () {
                         boostMessage = '' +
                             '      <hr>' +
                             '      <p>' + boostMessage + '</p>';
-                    }
-
-                    let boostReply = '';
-                    if (boostReplyAddress) {
-                        boostReply = $(`
-                            <a
-                              href="#"
-                              class="btn btn-sm btn-outline-primary position-relative"
-                              style="display: inline-flex; align-items: center;"
-                              data-toggle="modal"
-                              data-target="#replyModal"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" height="1em" viewBox="0 0 512 512" fill="currentColor" style="margin-right: 0.375rem">
-                                <!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2023 Fonticons, Inc. -->
-                                <path d="M156.6 384.9L125.7 354c-8.5-8.5-11.5-20.8-7.7-32.2c3-8.9 7-20.5 11.8-33.8L24 288c-8.6 0-16.6-4.6-20.9-12.1s-4.2-16.7 .2-24.1l52.5-88.5c13-21.9 36.5-35.3 61.9-35.3l82.3 0c2.4-4 4.8-7.7 7.2-11.3C289.1-4.1 411.1-8.1 483.9 5.3c11.6 2.1 20.6 11.2 22.8 22.8c13.4 72.9 9.3 194.8-111.4 276.7c-3.5 2.4-7.3 4.8-11.3 7.2v82.3c0 25.4-13.4 49-35.3 61.9l-88.5 52.5c-7.4 4.4-16.6 4.5-24.1 .2s-12.1-12.2-12.1-20.9V380.8c-14.1 4.9-26.4 8.9-35.7 11.9c-11.2 3.6-23.4 .5-31.8-7.8zM384 168a40 40 0 1 0 0-80 40 40 0 1 0 0 80z"/>
-                              </svg>
-                              Reply
-                            </a>
-                        `)
-                        .attr({
-                            'data-index': boostIndex,
-                            'data-reply-address': boostReplyAddress,
-                            'data-reply-sender': element.sender,
-                            'data-reply-custom-key': boostReplyCustomKey,
-                            'data-reply-custom-value': boostReplyCustomValue,
-                        })
-                        .prop('outerHTML');
                     }
 
                     //If there is a difference between actual and stated sats, display it
@@ -182,40 +138,28 @@ $(document).ready(function () {
                         }
                     }
 
-                    if (!messageIds.includes(boostIndex)) {
+                    if (!messageIds.includes(boostIndex) && element.action == 2) {
                         let dateTime = new Date(element.time * 1000).toISOString();
                         $('div.nodata').remove();
 
-
                         //Build the message element
-                        elMessage = `
-                        <div class="outgoing_msg message" data-msgid="${boostIndex}" style="width: 100%">
-                          <div class="sent_msg">
-                            <div class="sent_withd_msg">
-                              <span class="app">
-                                <a href="${appIconHref}"><img src="${appIconUrl}" title="${boostApp}" alt="${boostApp}"></a>
-                              </span>
-                              <div class="pull-right text-right">
-                                <time class="time_date" datetime="${dateTime}" title="${dateFormat(dateTime)}">
-                                  <a href="#" style="color: blue" data-toggle="modal" data-target="#boostInfo">
-                                    ${prettyDate(dateTime)}
-                                  </a>
-                                </time>
-                                ${boostReply}
-                              </div>
-                              <h5 class="sats">
-                                ${boostDisplayAmount} ${boostPerson} ${boostNumerology}
-                              </h5>
-                              <small class="podcast_episode">
-                                ${boostPodcast} - ${boostEpisode}
-                                <span class="remote_item">${boostRemoteInfo}</span>
-                              </small>
-                              <div style="clear: both">
-                                ${boostMessage}
-                              </div>
-                            </div>
-                          </div>
-                        </div>`;
+                        elMessage = '' +
+                            '<div class="outgoing_msg message" data-msgid="' + boostIndex + '">' +
+                            '  <div class="sent_msg">' +
+                            '    <div class="sent_withd_msg">' +
+                            '      <span class="app"><a href="' + appIconHref + '"><img src="' + appIconUrl + '" title="' + boostApp + '" alt="' + boostApp + '"></a></span>' +
+                            '      <h5 class="sats">' + boostDisplayAmount + ' ' + boostSender + ' ' + boostNumerology + '</small></h5>' +
+                            '      <time class="time_date" datetime="' + dateTime + '" title="' + dateFormat(dateTime) + '">' + 
+                            '        <a href="#" style="color: blue" data-toggle="modal" data-target="#boostInfo">' + prettyDate(dateTime) + '</a>' + 
+                            '      </time>' +
+                            '      <small class="podcast_episode">' +
+                            '        ' + boostPodcast + ' - ' + boostEpisode +
+                            '        <span class="remote_item">' + boostRemoteInfo + '</span>' +
+                            '      </small>' +
+                            boostMessage
+                        '    </div>' +
+                        '  </div>' +
+                        '</div>';
 
                         //Insert the message in the right spot
                         if (displayedMessageCount == 0) {
@@ -237,10 +181,7 @@ $(document).ready(function () {
 
                             } else {
                                 $('div.outgoing_msg[data-msgid=' + closestId + ']').before(elMessage);
-
-                                if (config.effects) {
-                                    shootConfetti(1500);
-                                }
+                                shootConfetti(1500);
                             }
 
                         }
@@ -249,7 +190,7 @@ $(document).ready(function () {
                         messageIds.push(boostIndex);
                         messageIds = messageIds.sort((a, b) => a - b);
 
-                        if (shouldPew && config.effects) {
+                        if (shouldPew) {
                             //Pew pew pew!
                             pewAudio.play();
                         }
@@ -258,29 +199,12 @@ $(document).ready(function () {
 
                 //Show a message if still building
                 if ($('div.outgoing_msg').length == 0 && $('div.nodata').length == 0) {
-                    if (config.pluralName == 'boosts') {
-                        inbox.prepend('<div class="nodata"><p>No data to show yet. Building the initial database may take some time if you have many ' +
-                            'transactions, or maybe you have not been sent any boostagrams yet?</p>' +
-                            '<p>This screen will automatically refresh as boostagrams are sent to you.</p>' +
-                            '<p><a href="https://podcastindex.org/apps">Check out a Podcasting 2.0 app to send boosts and boostagrams.</a></p>' +
-                            '<div class="lds-dual-ring"></div> Looking for boosts: <span class="invindex">' + currentInvoiceIndex + '</span>' +
-                            '</div>');
-                    }
-                    else if (config.pluralName == 'streams') {
-                        inbox.prepend('<div class="nodata"><p>No data to show yet. Building the initial database may take some time if you have many ' +
-                            'transactions, or maybe you have not had any satoshis streamed to you yet?</p>' +
-                            '<p>This screen will automatically refresh as satoshis are streamed to you.</p>' +
-                            '<p><a href="https://podcastindex.org/apps">Check out a Podcasting 2.0 app to stream satoshis.</a></p>' +
-                            '<div class="lds-dual-ring"></div> Looking for streams: <span class="invindex">' + currentInvoiceIndex + '</span>' +
-                            '</div>');
-                    }
-                    else if (config.pluralName == 'sent boosts') {
-                        inbox.prepend('<div class="nodata"><p>No data to show yet. Building the initial database may take some time if you have many ' +
-                            'transactions, or maybe you have not sent any satoshis from your node yet?</p>' +
-                            '<p>This screen will automatically refresh as you send satoshis from your node.</p>' +
-                            '<div class="lds-dual-ring"></div> Looking for sent boosts: <span class="invindex">' + currentInvoiceIndex + '</span>' +
-                            '</div>');
-                    }
+                    inbox.prepend('<div class="nodata"><p>No data to show yet. Building the initial database may take some time if you have many ' +
+                        'transactions, or maybe you have not been sent any boostagrams yet?</p>' +
+                        '<p>This screen will automatically refresh as boostagrams are sent to you.</p>' +
+                        '<p><a href="https://podcastindex.org/apps">Check out a Podcasting 2.0 app to send boosts and boostagrams.</a></p>' +
+                        '<div class="lds-dual-ring"></div> Looking for boosts: <span class="invindex">' + currentInvoiceIndex + '</span>' +
+                        '</div>');
                 }
                 $('div.nodata span.invindex').text(currentInvoiceIndex);
 
@@ -300,7 +224,7 @@ $(document).ready(function () {
 
                 //Load more link
                 if ($('div.outgoing_msg').length > 0 && $('div.loadmore').length == 0 && (boostIndex > 1 || noIndex)) {
-                    inbox.append('<div class="loadmore"><a href="#">Show older ' + config.pluralName + '...</a></div>');
+                    inbox.append('<div class="loadmore"><a href="#">Show older boosts...</a></div>');
                 }
             }
         });
@@ -388,7 +312,7 @@ $(document).ready(function () {
     function getIndex() {
         //Get the current boost index number
         $.ajax({
-            url: config.indexUrl,
+            url: "/api/v1/index",
             type: "GET",
             contentType: "application/json; charset=utf-8",
             dataType: "json",
@@ -430,13 +354,12 @@ $(document).ready(function () {
 
     //Render the boost info modal
     function renderBoostInfo() {
-        const name = ucWords(config.singularName);
         const $dialog = $(`
         <div id="boostInfo" class="modal" tabindex="-1">
           <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content">
               <div class="modal-header">
-                <h5 class="modal-title">${name} Info</h5>
+                <h5 class="modal-title">Boost Info</h5>
                 <button type="button" class="close" data-dismiss="modal" aria-label="Close">
                   <span aria-hidden="true">&times;</span>
                 </button>
@@ -458,11 +381,11 @@ $(document).ready(function () {
             const msgid = $target.closest(".outgoing_msg").data('msgid');
             const $table = $dialog.find('.modal-body table tbody');
 
-            $table.html(`Loading ${config.singularName}...`);
+            $table.html('Loading boost...');
 
-            $.getJSON(`${config.listUrl}?index=${msgid}&count=1&old=true`, (result) => {
+            $.getJSON(`/api/v1/boosts?index=${msgid}&count=1&old=true`, (result) => {
                 if (!result[0]) {
-                    return $table.html(`${name} not found!`);
+                    return $table.html('Boost not found!');
                 }
 
                 const boost = result[0];
@@ -484,120 +407,8 @@ $(document).ready(function () {
         });
     }
 
-    function renderReplyModal() {
-        const $dialog = $(`
-        <div id="replyModal" class="modal" tabindex="-1">
-          <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-              <form id="reply-form" class="needs-validation">
-                <div class="modal-header">
-                  <h5 class="modal-title">Reply to Boost</h5>
-                  <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                  </button>
-                </div>
-                <div class="modal-body">
-                  <div class="form-group row">
-                    <label for="recipient-name" class="col-sm-2 col-form-label">Recipient:</label>
-                    <div id="recipient-name" class="col-sm-10 col-form-label text-truncate">
-                    </div>
-                  </div>
-                  <div class="form-group row">
-                    <label for="sender-name" class="col-sm-2 col-form-label">Sender:</label>
-                    <div class="col-sm-10">
-                      <input type="text" class="form-control" id="sender-name" placeholder="anonymous">
-                    </div>
-                  </div>
-                  <div class="form-group row">
-                    <label for="sat-amt" class="col-sm-2 col-form-label">Sats:</label>
-                    <div class="col-sm-10">
-                      <input type="number" class="form-control w-auto" id="sat-amt" placeholder="sats" min="1" required>
-                      <div class="invalid-feedback">
-                        Please enter the number of sats to send.
-                      </div>
-                    </div>
-                  </div>
-                  <div class="form-group">
-                    <label for="message-text" class="col-form-label">Message:</label>
-                    <textarea class="form-control" id="message-text" style="height: 8rem;" maxlength="500"></textarea>
-                    <span id="message-chars">500</span> characters remaining
-                  </div>
-                </div>
-                <div class="modal-footer">
-                  <input id="reply-index" type="hidden" name="index" value="" required>
-                  <input id="recipient-address" type="hidden" name="recipient-address" value="">
-                  <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-                  <button id="send-boost-reply" type="button" class="btn btn-primary d-flex align-items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" height="1em" viewBox="0 0 512 512" fill="currentColor" style="margin-right: 0.25rem">
-                      <!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2023 Fonticons, Inc. -->
-                      <path d="M156.6 384.9L125.7 354c-8.5-8.5-11.5-20.8-7.7-32.2c3-8.9 7-20.5 11.8-33.8L24 288c-8.6 0-16.6-4.6-20.9-12.1s-4.2-16.7 .2-24.1l52.5-88.5c13-21.9 36.5-35.3 61.9-35.3l82.3 0c2.4-4 4.8-7.7 7.2-11.3C289.1-4.1 411.1-8.1 483.9 5.3c11.6 2.1 20.6 11.2 22.8 22.8c13.4 72.9 9.3 194.8-111.4 276.7c-3.5 2.4-7.3 4.8-11.3 7.2v82.3c0 25.4-13.4 49-35.3 61.9l-88.5 52.5c-7.4 4.4-16.6 4.5-24.1 .2s-12.1-12.2-12.1-20.9V380.8c-14.1 4.9-26.4 8.9-35.7 11.9c-11.2 3.6-23.4 .5-31.8-7.8zM384 168a40 40 0 1 0 0-80 40 40 0 1 0 0 80z"/>
-                    </svg>
-                    Boost
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>`).appendTo('body');
-
-        $dialog.on('show.bs.modal', function (ev) {
-            const data = $(ev.relatedTarget).data();
-            $dialog.find('#reply-index').val(data.index);
-            $dialog.find('#recipient-address').val(data.replyAddress);
-            $dialog.find('#recipient-name').text(data.replySender || data.replyAddress);
-            $dialog.find('#sender-name').val('');
-            $dialog.find('#sat-amt').val('');
-            $dialog.find('#message-text').val('');
-            $dialog.find('#message-chars').text(
-                $dialog.find('#message-text').prop('maxLength')
-            );
-            $dialog.find('#send-boost-reply').text('Boost').prop('disabled', false);
-            $dialog.find('#reply-form').removeClass('was-validated');
-        });
-
-        $dialog.find('#message-text').on('change keydown keyup', function () {
-            $dialog.find('#message-chars').text(this.maxLength - this.value.length);
-        });
-
-        $dialog.find('#send-boost-reply').click(function (event) {
-            const $form = $dialog.find('#reply-form');
-            const valid = $form[0].checkValidity()
-
-            $form.addClass('was-validated');
-
-            if (!valid) {
-                return;
-            }
-
-            const $btn = $(this);
-            $btn.text('Boosting').prop('disabled', true);
-
-            $.post(`/api/v1/reply`, {
-                // index: $dialog.find('#reply-index').val(),
-                index: $dialog.find('#reply-index').val(),
-                sender: $dialog.find('#sender-name').val(),
-                sats: $dialog.find('#sat-amt').val(),
-                message: $dialog.find('#message-text').val(),
-            }, function (result) {
-                if (!result.success) {
-                    $btn.text('Boost').prop('disabled', false);
-                    return alert(result.message);
-                }
-
-                $btn.text('Boosted!');
-
-                setTimeout(() => $dialog.modal('hide'), 1000);
-            }).fail(function (req) {
-                alert(req.responseText)
-                $btn.text('Boost').prop('disabled', false);
-            });
-        });
-    }
-
     //Build the UI with the page loads
     async function initPage() {
-        setConfig();
-        renderReplyModal();
         //Get starting balance and index number
         getBalance(true);
         await getAppList();
@@ -605,31 +416,6 @@ $(document).ready(function () {
         renderBoostInfo();
         getIndex();
     }
-
-    function setConfig() {
-        const pathname = window.location.pathname;
-
-        if (pathname == "/") {
-            config.listUrl = '/api/v1/boosts';
-            config.singularName = 'boost';
-            config.pluralName = 'boosts';
-        }
-        else if (pathname == "/streams") {
-            config.listUrl = '/api/v1/streams';
-            config.singularName = 'stream';
-            config.pluralName = 'streams';
-        }
-        else if (pathname == "/sent") {
-            config.listUrl = '/api/v1/sent';
-            config.indexUrl = '/api/v1/sent_index';
-            config.singularName = 'sent boost';
-            config.pluralName = 'sent boosts';
-            config.effects = false;
-        }
-    }
-
-    //Initialize the page
-    initPage();
 
     //Load more messages handler
     $(document).on('click', 'div.loadmore a', function () {
