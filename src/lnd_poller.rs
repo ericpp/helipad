@@ -409,6 +409,7 @@ pub async fn lnd_poller(helipad_config: HelipadConfig) {
                                     custom_key: 0,
                                     custom_value: "".into(),
                                     fee_msat: payment.fee_msat,
+                                    reply_to_idx: None,
                                 }),
                             };
 
@@ -425,6 +426,7 @@ pub async fn lnd_poller(helipad_config: HelipadConfig) {
                                         custom_key: idx,
                                         custom_value: custom_value,
                                         fee_msat: payment.fee_msat,
+                                        reply_to_idx: None,
                                     });
                                 }
                             }

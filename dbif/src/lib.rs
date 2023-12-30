@@ -48,6 +48,7 @@ pub struct PaymentRecord {
     pub custom_key: u64,
     pub custom_value: String,
     pub fee_msat: i64,
+    pub reply_to_idx: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -205,7 +206,8 @@ pub fn create_database(filepath: &String) -> Result<bool, Box<dyn Error>> {
     //Create the sent boosts table
     match conn.execute(
         "CREATE TABLE IF NOT EXISTS sent_boosts (
-             idx integer primary key,
+             nbr integer primary key,
+             idx integer unique,
              time integer,
              value_msat integer,
              value_msat_total integer,
@@ -222,12 +224,19 @@ pub fn create_database(filepath: &String) -> Result<bool, Box<dyn Error>> {
              payment_pubkey text,
              payment_custom_key integer,
              payment_custom_value text,
-             payment_fee_msat integer
+             payment_fee_msat integer,
+             reply_to_idx integer
          )",
         [],
     ) {
         Ok(_) => {
-            println!("Sent boosts table is ready.");
+            match conn.execute("CREATE INDEX IF NOT EXISTS idx_sent_boosts_reply_to_idx ON sent_boosts (reply_to_idx)", []) {
+                Ok(_) => println!("Sent boosts table is ready."),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return Err(Box::new(HydraError(format!("Failed to create reply_to_idx on sent_boosts table: [{}].", filepath).into())))
+                }
+            }
         }
         Err(e) => {
             eprintln!("{}", e);
@@ -475,7 +484,8 @@ pub fn get_payments_from_db(filepath: &String, index: u64, max: u64, direction: 
             payment_pubkey,
             payment_custom_key,
             payment_custom_value,
-            payment_fee_msat
+            payment_fee_msat,
+            reply_to_idx
         FROM
             sent_boosts
         WHERE
@@ -511,6 +521,7 @@ pub fn get_payments_from_db(filepath: &String, index: u64, max: u64, direction: 
                 custom_key: row.get(15)?,
                 custom_value: row.get(16)?,
                 fee_msat: row.get(17)?,
+                reply_to_idx: row.get(18)?,
             }),
         })
     }).unwrap();
@@ -600,7 +611,8 @@ pub fn add_payment_to_db(filepath: &String, boost: BoostRecord) -> Result<bool, 
             payment_pubkey,
             payment_custom_key,
             payment_custom_value,
-            payment_fee_msat
+            payment_fee_msat,
+            reply_to_idx
         )
         VALUES
             (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
@@ -624,6 +636,7 @@ pub fn add_payment_to_db(filepath: &String, boost: BoostRecord) -> Result<bool, 
             payment_info.custom_key,
             payment_info.custom_value,
             payment_info.fee_msat,
+            payment_info.reply_to_idx,
         ]
     ) {
         Ok(_) => Ok(true),
