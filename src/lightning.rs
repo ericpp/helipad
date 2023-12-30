@@ -1,5 +1,5 @@
 use data_encoding::HEXLOWER;
-use lnd::lnrpc::lnrpc::{SendRequest, SendResponse};
+use lnd::lnrpc::lnrpc::{SendRequest, SendResponse, Payment};
 use serde_json::Value;
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ pub async fn connect_to_lnd(node_address: String, cert_path: String, macaroon_pa
     return lightning.ok();
 }
 
-pub async fn resolve_lightning_address(address: &str) -> Result<LnAddressResponse, Box<dyn Error>> {
+pub async fn resolve_keysend_address(address: &str) -> Result<LnAddressResponse, Box<dyn Error>> {
     if !address.contains('@') {
         return Err(Box::new(LnAddressError("Invalid lightning address".to_string())));
     }
@@ -115,7 +115,27 @@ pub async fn resolve_lightning_address(address: &str) -> Result<LnAddressRespons
     return Ok(data);
 }
 
-pub async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Result<SendResponse, Box<dyn Error>> {
+pub async fn resolve_address_info(pub_key: &mut &str, custom_key: &mut Option<u64>, custom_value: &mut Option<&str>) -> Result<(), Box<dyn Error>> {
+    if !pub_key.contains("@") {
+        // not a keysend address: nothing to do
+        return Ok(());
+    }
+
+     // pub_key is actually a keysend address
+    let ln_info = resolve_keysend_address(pub_key).await?;
+
+    *pub_key = &ln_info.pubkey;
+
+    if ln_info.custom_data.len() > 0 {
+        let ckey_u64 = ln_info.custom_data[0].custom_key.parse::<u64>()?;
+        *custom_key = Some(ckey_u64);
+        *custom_value = Some(ln_info.custom_data[0].custom_value.as_str());
+    }
+
+    Ok(())
+}
+
+pub async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Option<u64>, custom_value: Option<&str>, sats: i64, tlv: Value) -> Result<Payment, Box<dyn Error>> {
     // thanks to BrianOfLondon and Mostro for keysend details:
     // https://peakd.com/@brianoflondon/lightning-keysend-is-strange-and-how-to-send-keysend-payment-in-lightning-with-the-lnd-rest-api-via-python
     // https://github.com/MostroP2P/mostro/blob/52a4f86c3942c26bd42dc55f1e53db5da9f7542b/src/lightning/mod.rs#L18
@@ -124,19 +144,8 @@ pub async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Opti
     let mut real_custom_key = custom_key;
     let mut real_custom_value = custom_value;
 
-    let ln_info: LnAddressResponse;
-
-    if pub_key.contains("@") { // pub_key is actually a lightning address
-        ln_info = resolve_lightning_address(pub_key).await?;
-
-        real_pub_key = ln_info.pubkey.as_str();
-
-        if ln_info.custom_data.len() > 0 {
-            let ckey_u64 = ln_info.custom_data[0].custom_key.parse::<u64>()?;
-            real_custom_key = Some(ckey_u64);
-            real_custom_value = Some(ln_info.custom_data[0].custom_value.as_str());
-        }
-    }
+    // convert keysend addresses into pub_key/custom keyvalue format
+    resolve_address_info(&mut real_pub_key, &mut real_custom_key, &mut real_custom_value).await?;
 
     // convert pub key hash to raw bytes
     let raw_pub_key = HEXLOWER.decode(real_pub_key.as_bytes()).unwrap();
@@ -171,9 +180,28 @@ pub async fn send_boost(mut lightning: lnd::Lnd, pub_key: &str, custom_key: Opti
         ..Default::default()
     };
 
-    // send payment
-    match lnd::Lnd::send_payment_sync(&mut lightning, req).await {
-        Ok(payment) => Ok(payment),
-        Err(e) => Err(Box::new(e))
+    // send payment and get payment hash
+    let response = lnd::Lnd::send_payment_sync(&mut lightning, req).await?;
+    let sent_payment_hash = HEXLOWER.encode(&response.payment_hash);
+
+    println!("response {}: {:#?}", sent_payment_hash, response);
+
+    if response.payment_error != "" {
+        return Err(Box::new(response.payment_error));
     }
+
+
+    // get detailed payment info from list_payments
+    let payment_list = lnd::Lnd::list_payments(&mut lightning, false, 0, 500, false).await?;
+
+    for payment in payment_list.payments {
+        if sent_payment_hash == payment.payment_hash {
+            println!("FOUND PAYMENT: {:#?}", payment);
+            Ok(payment);
+        }
+    }
+
+    // return boostrecord object?
+
+    Err(Box::new("Failed to find payment sent"))
 }

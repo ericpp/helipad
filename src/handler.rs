@@ -606,8 +606,8 @@ pub async fn api_v1_sent(_ctx: Context) -> Response {
 
     //Get sent boosts from db for returning
     match dbif::get_payments_from_db(&_ctx.helipad_config.database_file_path, index, boostcount, old, true) {
-        Ok(streams) => {
-            let json_doc_raw = serde_json::to_string_pretty(&streams).unwrap();
+        Ok(sent_boosts) => {
+            let json_doc_raw = serde_json::to_string_pretty(&sent_boosts).unwrap();
             let json_doc: String = strip::strip_tags(&json_doc_raw);
 
             return hyper::Response::builder()
