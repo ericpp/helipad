@@ -43,15 +43,16 @@ async fn get_post_params(req: Request<Body>) -> HashMap<String, String> {
 }
 
 fn client_error_response(message: String) -> Response {
-    return hyper::Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(message.into())
-        .unwrap();
+    text_response(message, StatusCode::BAD_REQUEST)
 }
 
 fn server_error_response(message: String) -> Response {
+    text_response(message, StatusCode::SERVICE_UNAVAILABLE)
+}
+
+fn text_response(message: String, code: StatusCode) -> Response {
     return hyper::Response::builder()
-        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .status(code)
         .body(message.into())
         .unwrap();
 }
