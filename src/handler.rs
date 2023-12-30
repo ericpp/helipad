@@ -658,7 +658,7 @@ pub async fn api_v1_reply(_ctx: Context) -> Response {
         None => ""
     };
 
-    let boosts = match dbif::get_boosts_from_db(&_ctx.helipad_config.database_file_path, index, 1, false, true) {
+    let boosts = match dbif::get_boosts_from_db(&_ctx.helipad_config.database_file_path, index, 1, true, true) {
         Ok(items) => items,
         Err(_) => {
             return server_error_response("** Error finding boost index.".to_string());
