@@ -28,6 +28,18 @@ use url::Url;
 use tempfile::NamedTempFile;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::BTreeMap;
+use std::str::FromStr;
+use aws_config::Region;
+use aws_credential_types::provider::SharedCredentialsProvider;
+use aws_credential_types::Credentials as AwsCredentials;
+use aws_sdk_polly::{
+    Client as PollyClient,
+    types::OutputFormat,
+    types::VoiceId,
+};
+use data_encoding::BASE64;
+use dbif::SettingsRecord;
 
 // JWT session times
 const JWT_SESSION_HOURS: i64 = 1;             // 1 hour for normal login
@@ -1060,6 +1072,11 @@ pub async fn general_settings_load(State(state): State<AppState>) -> impl IntoRe
     HtmlTemplate("webroot/template/general-settings.hbs", json!({"settings": settings}))
 }
 
+pub async fn tts_settings_load(State(state): State<AppState>) -> impl IntoResponse {
+    let settings = dbif::load_settings_from_db(&state.helipad_config.database_file_path).unwrap();
+    HtmlTemplate("webroot/template/tts-settings.hbs", json!({"settings": settings}))
+}
+
 #[derive(Debug, TryFromMultipart)]
 pub struct GeneralSettingsMultipart {
     show_received_sats: Option<bool>,
@@ -1079,6 +1096,26 @@ pub struct GeneralSettingsMultipart {
     #[form_data(limit = "5MiB")]
     custom_pew_file: Option<FieldData<NamedTempFile>>,
     custom_pew_existing: Option<bool>,
+}
+
+#[derive(Debug, TryFromMultipart)]
+pub struct TTSSettingsMultipart {
+    tts_enabled: Option<bool>,
+    tts_rate: Option<String>,
+    tts_pitch: Option<String>,
+    tts_volume: Option<String>,
+    tts_on_boost: Option<bool>,
+    tts_on_stream: Option<bool>,
+    tts_on_payment: Option<bool>,
+    tts_min_sats: Option<String>,
+    tts_script: Option<String>,
+    tts_script_without_message: Option<String>,
+    tts_voice: Option<String>,
+    tts_provider: Option<String>,
+    tts_aws_region: Option<String>,
+    tts_aws_access_key_id: Option<String>,
+    tts_aws_secret_access_key: Option<String>,
+    tts_aws_voice_id: Option<String>,
 }
 
 pub async fn general_settings_save(
@@ -1132,6 +1169,257 @@ pub async fn general_settings_save(
     HtmlTemplate("webroot/template/general-settings.hbs", json!({"settings": settings, "saved": true}))
 }
 
+pub async fn tts_settings_save(
+    State(state): State<AppState>,
+    TypedMultipart(parts): TypedMultipart<TTSSettingsMultipart>,
+) -> impl IntoResponse {
+
+    let tts_min_sats = match parts.tts_min_sats {
+        Some(s) => match s.is_empty() {
+            false => Some(s.parse::<u64>().unwrap_or(0)),
+            true => None,
+        },
+        None => None,
+    };
+
+    let mut settings = dbif::load_settings_from_db(&state.helipad_config.database_file_path).unwrap();
+
+    // TTS settings
+    settings.tts_enabled = parts.tts_enabled.unwrap_or(false);
+    settings.tts_rate = parts.tts_rate.and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
+    settings.tts_pitch = parts.tts_pitch.and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
+    settings.tts_volume = parts.tts_volume.and_then(|s| s.parse::<f32>().ok()).unwrap_or(1.0);
+    settings.tts_on_boost = parts.tts_on_boost.unwrap_or(false);
+    settings.tts_on_stream = parts.tts_on_stream.unwrap_or(false);
+    settings.tts_on_payment = parts.tts_on_payment.unwrap_or(false);
+    settings.tts_min_sats = tts_min_sats;
+    settings.tts_script = parts.tts_script.filter(|s| !s.trim().is_empty());
+    settings.tts_script_without_message = parts.tts_script_without_message.filter(|s| !s.trim().is_empty());
+    settings.tts_voice = parts.tts_voice.filter(|s| !s.trim().is_empty());
+    settings.tts_provider = parts.tts_provider.filter(|s| !s.trim().is_empty());
+    settings.tts_aws_region = parts.tts_aws_region.filter(|s| !s.trim().is_empty());
+    settings.tts_aws_access_key_id = parts.tts_aws_access_key_id.filter(|s| !s.trim().is_empty());
+    settings.tts_aws_secret_access_key = parts.tts_aws_secret_access_key.filter(|s| !s.trim().is_empty());
+    settings.tts_aws_voice_id = parts.tts_aws_voice_id.filter(|s| !s.trim().is_empty());
+
+    if !settings.tts_enabled {
+        settings.tts_min_sats = None;
+    }
+
+    dbif::save_settings_to_db(&state.helipad_config.database_file_path, &settings).unwrap();
+
+    *state.settings.write().await = settings.clone();
+
+    HtmlTemplate("webroot/template/tts-settings.hbs", json!({"settings": settings, "saved": true}))
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollyTTSRequest {
+    text: String,
+    voice_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollyTTSResponse {
+    success: bool,
+    audio_data: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollyVoice {
+    id: String,
+    name: String,
+    gender: String,
+    language_name: String,
+    language_code: String,
+    default: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollyVoicesResponse {
+    success: bool,
+    voices: Option<Vec<PollyVoice>>,
+    error: Option<String>,
+}
+
+// Helper function to build AWS config from settings
+async fn build_polly_client(settings: &SettingsRecord) -> Result<PollyClient, String> {
+    let region = settings.tts_aws_region.as_ref()
+        .ok_or("AWS region is not configured")?;
+
+    let access_key_id = settings.tts_aws_access_key_id.as_ref()
+        .ok_or("AWS access key ID is not configured")?;
+
+    let secret_access_key = settings.tts_aws_secret_access_key.as_ref()
+        .ok_or("AWS secret access key is not configured")?;
+
+    let credentials = AwsCredentials::new(
+        access_key_id,
+        secret_access_key,
+        None,
+        None,
+        "helipad",
+    );
+
+    let credentials_provider = SharedCredentialsProvider::new(credentials);
+    let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(Region::new(region.clone()))
+        .credentials_provider(credentials_provider)
+        .load()
+        .await;
+
+    Ok(PollyClient::new(&aws_config))
+}
+
+pub async fn api_v1_polly_tts(
+    State(state): State<AppState>,
+    Json(req): Json<PollyTTSRequest>,
+) -> Response {
+    let settings = state.settings.read().await;
+
+    // Check if Amazon Polly is configured
+    if settings.tts_provider.as_deref() != Some("amazon_polly") {
+        return (StatusCode::BAD_REQUEST, Json(PollyTTSResponse {
+            success: false,
+            audio_data: None,
+            error: Some("Amazon Polly is not configured as the TTS provider".to_string()),
+        })).into_response();
+    }
+
+    // Build Polly client
+    let client = match build_polly_client(&settings).await {
+        Ok(c) => c,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, Json(PollyTTSResponse {
+                success: false,
+                audio_data: None,
+                error: Some(e),
+            })).into_response();
+        }
+    };
+
+    // Determine voice ID
+    let voice_id = req.voice_id.as_deref()
+        .or(settings.tts_aws_voice_id.as_deref())
+        .unwrap_or("Joanna");
+
+    // Parse voice ID
+    let voice = match VoiceId::from_str(voice_id) {
+        Ok(v) => v,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, Json(PollyTTSResponse {
+                success: false,
+                audio_data: None,
+                error: Some(format!("Invalid voice ID: {}", voice_id)),
+            })).into_response();
+        }
+    };
+
+    // Synthesize speech
+    match client
+        .synthesize_speech()
+        .text(&req.text)
+        .output_format(OutputFormat::Mp3)
+        .voice_id(voice)
+        .send()
+        .await
+    {
+        Ok(output) => {
+            match output.audio_stream.collect().await {
+                Ok(stream_data) => {
+                    let audio_bytes = stream_data.into_bytes();
+                    let audio_base64 = BASE64.encode(&audio_bytes);
+                    (StatusCode::OK, Json(PollyTTSResponse {
+                        success: true,
+                        audio_data: Some(audio_base64),
+                        error: None,
+                    })).into_response()
+                }
+                Err(e) => {
+                    eprintln!("Error collecting audio stream: {}", e);
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(PollyTTSResponse {
+                        success: false,
+                        audio_data: None,
+                        error: Some(format!("Error collecting audio stream: {}", e)),
+                    })).into_response()
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Amazon Polly error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(PollyTTSResponse {
+                success: false,
+                audio_data: None,
+                error: Some(format!("Amazon Polly error: {}", e)),
+            })).into_response()
+        }
+    }
+}
+
+pub async fn api_v1_polly_voices(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let settings = state.settings.read().await;
+    let default_voice = match params.get("default") {
+        Some(v) => v.clone(),
+        None => "Joanna".to_string(),
+    };
+
+    // Build Polly client
+    let client = match build_polly_client(&settings).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Amazon Polly error: {}", e);
+            let error = format!("Amazon Polly error: {}", e);
+            return HtmlTemplate("webroot/template/tts-voice-list.hbs", json!({"error": error})).into_response();
+        }
+    };
+
+    // Fetch voices from Amazon Polly
+    match client.describe_voices().send().await {
+        Ok(output) => {
+            let voices: Vec<PollyVoice> = output.voices()
+                .iter()
+                .filter(|v| {
+                    // Only include standard voices
+                    v.supported_engines()
+                        .iter()
+                        .any(|e| e.as_str() == "standard")
+                })
+                .map(|v| PollyVoice {
+                    id: v.id().map(|id| id.as_str().to_string()).unwrap_or_default(),
+                    name: v.name().unwrap_or("Unknown").to_string(),
+                    gender: v.gender().map(|g| g.as_str().to_string()).unwrap_or_default(),
+                    language_name: v.language_name().unwrap_or("Unknown").to_string(),
+                    language_code: v.language_code().map(|lc| lc.as_str().to_string()).unwrap_or_default(),
+                    default: v.id().map(|id| id.as_str().to_string() == default_voice).unwrap_or_default(),
+                })
+                .collect();
+
+            // Group voices by language
+            let mut grouped_voices: BTreeMap<String, Vec<PollyVoice>> = BTreeMap::new();
+            for voice in voices {
+                grouped_voices
+                    .entry(voice.language_name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(voice);
+            }
+
+            // Sort voices within each language group alphabetically by name
+            for voices_in_group in grouped_voices.values_mut() {
+                voices_in_group.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+
+            HtmlTemplate("webroot/template/tts-voice-list.hbs", json!({"grouped_voices": grouped_voices, "default": default_voice})).into_response()
+        }
+        Err(e) => {
+            eprintln!("Amazon Polly error fetching voices: {}", e);
+            let error = format!("Amazon Polly error fetching voices: {}", e);
+            return HtmlTemplate("webroot/template/tts-voice-list.hbs", json!({"error": error})).into_response();
+        }
+    }
+}
 pub fn numerology_list(db_filepath: &String) -> impl IntoResponse {
     let results = dbif::get_numerology_from_db(db_filepath).unwrap();
     HtmlTemplate("webroot/template/numerology-list.hbs", json!({"numerology": results}))

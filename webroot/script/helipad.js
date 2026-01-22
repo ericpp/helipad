@@ -2,7 +2,8 @@ $(document).ready(function () {
     let messages = $('div.mesgs');
     let inbox = messages.find('div.msg_history');
     let appIconUrlBase = 'image/';
-    let pewSound = new PewSound();
+    let pewAudio = new Audio();
+    let pewQueue = new PewQueue();
     let appList = {};
     let numerologyList = [];
     var connection = null;
@@ -288,7 +289,7 @@ $(document).ready(function () {
             }
 
             // Show fetch button for invoices with payment metadata (RSS payment or Podcast Guru)
-            let rssMarker = "rss::payment::" + config.singularName.toLowerCase();
+            let rssMarker = "rss::payment::";
             let guruMarker = "V4V: https://boost.podcastguru.io/";
             if (element.action === 5 && element.message &&
                 (element.message.indexOf(rssMarker) !== -1 || element.message.indexOf(guruMarker) !== -1)) {
@@ -308,9 +309,9 @@ $(document).ready(function () {
 
             let now = new Date();
 
-            if (shouldPew && config.effects && settings.play_pew && (now - timestamp) < 600000) { // if enabled/shouldPew and received within past 10 mins
+            if (shouldPew && config.effects && (now - timestamp) < 600000) { // if enabled/shouldPew and received within past 10 mins
                 //Pew pew pew!
-                playPew(boostSats);
+                pewQueue.add(element);
             }
         });
 
@@ -422,44 +423,42 @@ $(document).ready(function () {
         return numerology;
     }
 
-    // Plays and queues the pews
-    function PewSound() {
-        this.audio = new Audio();
-        this.playing = false;
+    function PewQueue() {
         this.queue = [];
+        this.running = false;
 
-        // plays the requested pew sound
-        const playSound = (src) => {
-            this.playing = true;
-
-            this.audio.src = src;
-            try {
-                this.audio.play();
-            } catch (err) {}
-
-            this.audio.addEventListener('ended', () => this.playing = false);
+        this.add = (element) => {
+            this.queue.push(element);
+            this.process();
         }
 
-        // work through the queue of pews
-        setInterval(() => {
-            if (!this.playing && this.queue.length > 0) {
-                playSound(this.queue.shift());
-            }
-        }, 1000);
+        this.process = async () => {
+            if (this.running || this.queue.length === 0) return;
 
-        // play or queue the sound
-        this.play = (src) => {
-            if (!this.playing && this.queue.length === 0) { // nothing playing or queued
-                playSound(src); // play the sound
+            this.running = true;
+
+            const element = this.queue.shift();
+
+            if (settings.play_pew) {
+                await playPew(element);
             }
-            else {
-                this.queue.push(src); // queue the sound
+
+            // Announce via text-to-speech
+            const type = config.singularName;
+
+            if (window.helipadTTS && settings && window.helipadTTS.shouldAnnounce(element, type, settings)) {
+                await window.helipadTTS.announceBoost(element, type);
             }
+
+            this.running = false;
+            this.process();
         }
     }
 
     //Play the pew sound that corresponds with the donation amount
-    function playPew(value) {
+    function playPew(element) {
+        let value = Math.trunc(element.value_msat_total / 1000) || Math.trunc(element.value_msat / 1000);
+
         // find the first pew with a sound file
         const pews = parseNumerology(value).filter(num => num.sound_file)
         let src = 'pew.mp3'; // default
@@ -471,7 +470,15 @@ $(document).ready(function () {
             src = `sound/${settings.custom_pew_file}`;
         }
 
-        pewSound.play(src);
+        return new Promise((resolve) => {
+            pewAudio.src = src;
+
+            try {
+                pewAudio.play();
+            } catch (err) {}
+
+            pewAudio.addEventListener('ended', () => resolve());
+        });
     }
 
     //Animate some confetti on the page with a given duration interval in milliseconds
@@ -490,6 +497,11 @@ $(document).ready(function () {
     //Get configured settings
     async function getSettings() {
         settings = await $.get(`/api/v1/settings`);
+
+        // Sync TTS settings from server
+        if (window.helipadTTS && settings) {
+            window.helipadTTS.syncFromServer(settings);
+        }
     }
 
     //Refresh the timestatmps of all the boosts on the list

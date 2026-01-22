@@ -287,6 +287,22 @@ async fn main() {
                 show_hosted_wallet_ids: false,
                 show_lightning_invoices: true,
                 fetch_metadata: true,
+                tts_enabled: false,
+                tts_rate: 1.0,
+                tts_pitch: 1.0,
+                tts_volume: 1.0,
+                tts_on_boost: true,
+                tts_on_stream: true,
+                tts_on_payment: true,
+                tts_min_sats: None,
+                tts_script: None,
+                tts_script_without_message: None,
+                tts_voice: None,
+                tts_provider: None,
+                tts_aws_region: None,
+                tts_aws_access_key_id: None,
+                tts_aws_secret_access_key: None,
+                tts_aws_voice_id: None,
             }
         }
     };
@@ -319,6 +335,9 @@ async fn main() {
 
             .route("/settings/general", get(handler::general_settings_load))
             .route("/settings/general", post(handler::general_settings_save))
+
+            .route("/settings/tts", get(handler::tts_settings_load))
+            .route("/settings/tts", post(handler::tts_settings_save))
 
             .route("/settings/numerology", get(handler::numerology_settings_list))
             .route("/settings/numerology/reset", get(handler::numerology_settings_reset))
@@ -361,6 +380,8 @@ async fn main() {
             .route("/api/v1/reply", post(handler::api_v1_reply))
             .route("/api/v1/mark_replied", post(handler::api_v1_mark_replied))
             .route("/api/v1/fetch_metadata/:idx", post(handler::api_v1_fetch_metadata))
+            .route("/api/v1/polly/tts", post(handler::api_v1_polly_tts))
+            .route("/api/v1/polly/voices", get(handler::api_v1_polly_voices))
 
             // require auth for above routes
             .route_layer(middleware::from_fn_with_state(state.clone(), handler::auth_middleware))
