@@ -72,28 +72,54 @@ pub fn create_settings_table(conn: &Connection) -> Result<bool, Box<dyn Error>> 
         println!("Fetch metadata setting added.");
     }
 
-    // TTS settings
-    if conn.execute(
-        "ALTER TABLE settings
-        ADD COLUMN tts_enabled integer DEFAULT 0,
-        ADD COLUMN tts_rate real DEFAULT 1.0,
-        ADD COLUMN tts_pitch real DEFAULT 1.0,
-        ADD COLUMN tts_volume real DEFAULT 1.0,
-        ADD COLUMN tts_on_boost integer DEFAULT 1,
-        ADD COLUMN tts_on_stream integer DEFAULT 1,
-        ADD COLUMN tts_on_payment integer DEFAULT 1,
-        ADD COLUMN tts_min_sats integer,
-        ADD COLUMN tts_script text,
-        ADD COLUMN tts_script_without_message text,
-        ADD COLUMN tts_voice text,
-        ADD COLUMN tts_provider text,
-        ADD COLUMN tts_aws_region text,
-        ADD COLUMN tts_aws_access_key_id text,
-        ADD COLUMN tts_aws_secret_access_key text,
-        ADD COLUMN tts_aws_voice_id text
-        ", []
-    ).is_ok() {
-        println!("TTS settings added.");
+    // TTS settings - SQLite requires adding columns one at a time
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_enabled integer DEFAULT 0", []).is_ok() {
+        println!("TTS enabled setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_rate real DEFAULT 1.0", []).is_ok() {
+        println!("TTS rate setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_pitch real DEFAULT 1.0", []).is_ok() {
+        println!("TTS pitch setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_volume real DEFAULT 1.0", []).is_ok() {
+        println!("TTS volume setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_on_boost integer DEFAULT 1", []).is_ok() {
+        println!("TTS on_boost setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_on_stream integer DEFAULT 1", []).is_ok() {
+        println!("TTS on_stream setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_on_payment integer DEFAULT 1", []).is_ok() {
+        println!("TTS on_payment setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_min_sats integer", []).is_ok() {
+        println!("TTS min_sats setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_script text", []).is_ok() {
+        println!("TTS script setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_script_without_message text", []).is_ok() {
+        println!("TTS script_without_message setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_voice text", []).is_ok() {
+        println!("TTS voice setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_provider text", []).is_ok() {
+        println!("TTS provider setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_aws_region text", []).is_ok() {
+        println!("TTS aws_region setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_aws_access_key_id text", []).is_ok() {
+        println!("TTS aws_access_key_id setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_aws_secret_access_key text", []).is_ok() {
+        println!("TTS aws_secret_access_key setting added.");
+    }
+    if conn.execute("ALTER TABLE settings ADD COLUMN tts_aws_voice_id text", []).is_ok() {
+        println!("TTS aws_voice_id setting added.");
     }
 
     Ok(true)

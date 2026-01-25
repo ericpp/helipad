@@ -353,6 +353,19 @@ pub async fn api_v1_settings(State(state): State<AppState>) -> Response {
     }
 }
 
+//API - give back enabled triggers for frontend processing
+pub async fn api_v1_triggers(State(state): State<AppState>) -> Response {
+    match dbif::get_triggers_from_db(&state.helipad_config.database_file_path, Some(true)) {
+        Ok(triggers) => {
+            Json(triggers).into_response()
+        }
+        Err(e) => {
+            eprintln!("** Error getting triggers: {}.\n", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "** Error getting triggers.").into_response()
+        }
+    }
+}
+
 //API - give back the node balance
 pub async fn api_v1_balance(State(state): State<AppState>) -> Response {
 
@@ -1868,6 +1881,392 @@ pub async fn report_podcasts_list(State(state): State<AppState>) -> impl IntoRes
              HtmlTemplate("webroot/template/report-podcasts-list.hbs", json!({"error": err.to_string()}))
         }
     }
+}
+
+// Trigger handlers
+pub fn trigger_list(db_filepath: &String) -> impl IntoResponse {
+    let results = dbif::get_triggers_from_db(db_filepath, None).unwrap();
+    HtmlTemplate("webroot/template/trigger-list.hbs", json!({"triggers": results}))
+}
+
+pub async fn trigger_settings_list(State(state): State<AppState>) -> impl IntoResponse {
+    trigger_list(&state.helipad_config.database_file_path)
+}
+
+pub async fn trigger_settings_load(
+    State(state): State<AppState>,
+    Path(idx): Path<String>,
+) -> impl IntoResponse {
+
+    let index = match idx.as_str() {
+        "add" => 0,
+        idx => idx.parse().unwrap(),
+    };
+
+    let result = if index > 0 {
+        dbif::load_trigger_from_db(&state.helipad_config.database_file_path, index).ok()
+    } else {
+        None
+    };
+
+    let params = json!({
+        "trigger": result,
+    });
+
+    HtmlTemplate("webroot/template/trigger-edit.hbs", params)
+}
+
+#[derive(Debug, TryFromMultipart)]
+pub struct TriggerMultipart {
+    position: u64,
+    name: String,
+    enabled: Option<bool>,
+    
+    // Match criteria
+    match_amount_equality: Option<String>,
+    match_amount: Option<String>,
+    match_sender_equality: Option<String>,
+    match_sender: Option<String>,
+    match_app_equality: Option<String>,
+    match_app: Option<String>,
+    match_podcast_equality: Option<String>,
+    match_podcast: Option<String>,
+    match_episode_equality: Option<String>,
+    match_episode: Option<String>,
+    match_message_equality: Option<String>,
+    match_message: Option<String>,
+    
+    // Match on boost type
+    on_boost: Option<bool>,
+    on_auto: Option<bool>,
+    on_stream: Option<bool>,
+    on_sent: Option<bool>,
+    on_invoice: Option<bool>,
+    
+    // Actions
+    action_sound: Option<bool>,
+    #[form_data(limit = "5MiB")]
+    action_sound_file: Option<FieldData<NamedTempFile>>,
+    action_sound_file_existing: Option<bool>,
+    action_webhook: Option<bool>,
+    action_webhook_url: Option<String>,
+    action_webhook_token: Option<String>,
+    action_tts: Option<bool>,
+    action_tts_script: Option<String>,
+    action_midi: Option<bool>,
+    action_midi_note: Option<String>,
+    action_midi_velocity: Option<String>,
+    action_midi_channel: Option<String>,
+    action_midi_duration: Option<String>,
+    action_osc: Option<bool>,
+    action_osc_host: Option<String>,
+    action_osc_port: Option<String>,
+    action_osc_address: Option<String>,
+}
+
+pub async fn trigger_settings_save(
+    State(state): State<AppState>,
+    Path(idx): Path<String>,
+    TypedMultipart(parts): TypedMultipart<TriggerMultipart>,
+) -> Response {
+    let db_filepath = state.helipad_config.database_file_path;
+
+    let index = match idx.as_str() {
+        "add" => 0,
+        idx => idx.parse().unwrap(),
+    };
+
+    let mut trigger = dbif::TriggerRecord {
+        index,
+        position: parts.position,
+        name: parts.name,
+        enabled: parts.enabled.unwrap_or(false),
+        match_amount_equality: parts.match_amount_equality.unwrap_or_default(),
+        match_amount: parts.match_amount.and_then(|s| s.parse().ok()).unwrap_or_default(),
+        match_sender_equality: parts.match_sender_equality.unwrap_or_default(),
+        match_sender: parts.match_sender.unwrap_or_default(),
+        match_app_equality: parts.match_app_equality.unwrap_or_default(),
+        match_app: parts.match_app.unwrap_or_default(),
+        match_podcast_equality: parts.match_podcast_equality.unwrap_or_default(),
+        match_podcast: parts.match_podcast.unwrap_or_default(),
+        match_episode_equality: parts.match_episode_equality.unwrap_or_default(),
+        match_episode: parts.match_episode.unwrap_or_default(),
+        match_message_equality: parts.match_message_equality.unwrap_or_default(),
+        match_message: parts.match_message.unwrap_or_default(),
+        on_boost: parts.on_boost.unwrap_or(false),
+        on_auto: parts.on_auto.unwrap_or(false),
+        on_stream: parts.on_stream.unwrap_or(false),
+        on_sent: parts.on_sent.unwrap_or(false),
+        on_invoice: parts.on_invoice.unwrap_or(false),
+        action_sound: parts.action_sound.unwrap_or(false),
+        action_sound_file: None,
+        action_webhook: parts.action_webhook.unwrap_or(false),
+        action_webhook_url: parts.action_webhook_url.filter(|s| !s.is_empty()),
+        action_webhook_token: parts.action_webhook_token.filter(|s| !s.is_empty()),
+        action_tts: parts.action_tts.unwrap_or(false),
+        action_tts_script: parts.action_tts_script.filter(|s| !s.trim().is_empty()),
+        action_midi: parts.action_midi.unwrap_or(false),
+        action_midi_note: parts.action_midi_note.and_then(|s| s.parse::<u8>().ok()),
+        action_midi_velocity: parts.action_midi_velocity.and_then(|s| s.parse::<u8>().ok()),
+        action_midi_channel: parts.action_midi_channel.and_then(|s| s.parse::<u8>().ok()),
+        action_midi_duration: parts.action_midi_duration.and_then(|s| s.parse::<u16>().ok()),
+        action_osc: parts.action_osc.unwrap_or(false),
+        action_osc_host: parts.action_osc_host.filter(|s| !s.is_empty()),
+        action_osc_port: parts.action_osc_port.and_then(|s| s.parse::<u16>().ok()),
+        action_osc_address: parts.action_osc_address.filter(|s| !s.is_empty()),
+    };
+
+    if index > 0 {
+        let existing = match dbif::load_trigger_from_db(&db_filepath, index) {
+            Ok(exist) => exist,
+            Err(e) => {
+                eprintln!("** Error loading trigger: {}.\n", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, "** Error loading trigger.".to_string()).into_response();
+            }
+        };
+
+        trigger.action_sound_file = existing.action_sound_file;
+    }
+
+    if let Some(field) = parts.action_sound_file {
+        let filename = format!("trigger_{}.mp3", trigger.name.replace(' ', "_"));
+        let from_path = field.contents.path();
+        let to_path = format!("{}/{}", state.helipad_config.sound_path, filename);
+        let bytes = std::fs::copy(from_path, &to_path).unwrap_or(0);
+
+        if bytes > 0 {
+            println!("** Wrote sound file to: {}", to_path);
+            trigger.action_sound_file = Some(filename)
+        } else {
+            trigger.action_sound_file = None;
+        }
+    } else if parts.action_sound_file_existing.is_none() {
+        trigger.action_sound_file = None;
+    }
+
+    let idx = match dbif::save_trigger_to_db(&db_filepath, &trigger) {
+        Ok(idx) => idx,
+        Err(e) => {
+            eprintln!("** Error saving trigger: {}.\n", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "** Error saving trigger.").into_response();
+        }
+    };
+
+    println!("** trigger_settings_save({})", idx);
+
+    trigger_list(&db_filepath).into_response()
+}
+
+pub async fn trigger_settings_delete(
+    State(state): State<AppState>,
+    Path(idx): Path<String>
+) -> impl IntoResponse {
+
+    let index = idx.parse().unwrap();
+
+    if let Err(e) = dbif::delete_trigger_from_db(&state.helipad_config.database_file_path, index) {
+        eprintln!("** Error deleting trigger: {}.\n", e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "** Error deleting trigger.");
+    }
+
+    println!("** trigger_settings_delete({})", index);
+
+    (StatusCode::OK, "")
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TriggerPatchForm {
+    position: u64,
+}
+
+pub async fn trigger_settings_patch(
+    State(state): State<AppState>,
+    Path(idx): Path<String>,
+    Form(params): Form<TriggerPatchForm>,
+) -> Result<impl IntoResponse, (StatusCode, &'static str)> {
+    let db_filepath = state.helipad_config.database_file_path;
+
+    let index = idx.parse().unwrap();
+
+    let mut trigger = match dbif::load_trigger_from_db(&db_filepath, index) {
+        Ok(trig) => trig,
+        Err(e) => {
+            eprintln!("** Error loading trigger item: {}.\n", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "** Error loading trigger item."));
+        }
+    };
+
+    trigger.position = params.position;
+
+    match dbif::save_trigger_to_db(&db_filepath, &trigger) {
+        Ok(trig) => trig,
+        Err(e) => {
+            eprintln!("** Error saving trigger item: {}.\n", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "** Error saving trigger item."));
+        }
+    };
+
+    println!("** trigger_settings_patch({})", index);
+
+    Ok(trigger_list(&db_filepath))
+}
+
+pub async fn trigger_settings_test(
+    State(state): State<AppState>,
+    Path(idx): Path<String>
+) -> Response {
+    let index: u64 = match idx.parse() {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("** Invalid trigger index: {}.\n", e);
+            return (StatusCode::BAD_REQUEST, "Invalid trigger index").into_response();
+        }
+    };
+
+    let trigger = match dbif::load_trigger_from_db(&state.helipad_config.database_file_path, index) {
+        Ok(trig) => trig,
+        Err(e) => {
+            eprintln!("** Error loading trigger: {}.\n", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Error loading trigger").into_response();
+        }
+    };
+
+    let mut results: Vec<String> = Vec::new();
+
+    // Test webhook if enabled
+    if trigger.action_webhook {
+        if let Some(ref url) = trigger.action_webhook_url {
+            // Create a sample boost record for testing
+            let test_boost = dbif::BoostRecord {
+                index: 99999,
+                time: Utc::now().timestamp(),
+                value_msat: 100000,
+                value_msat_total: 100000,
+                action: 2, // boost action
+                sender: "Test Sender".to_string(),
+                app: "Helipad".to_string(),
+                message: "This is a test trigger message".to_string(),
+                podcast: "Test Podcast".to_string(),
+                episode: "Test Episode".to_string(),
+                tlv: json!({
+                    "action": "boost",
+                    "app_name": "Helipad",
+                    "app_version": state.version,
+                    "podcast": "Test Podcast",
+                    "episode": "Test Episode",
+                    "sender_name": "Test Sender",
+                    "message": "This is a test trigger message",
+                    "value_msat": 100000,
+                    "value_msat_total": 100000
+                }).to_string(),
+                remote_podcast: None,
+                remote_episode: None,
+                reply_sent: false,
+                custom_key: None,
+                custom_value: None,
+                payment_info: None,
+            };
+
+            // Create webhook payload
+            let test_payload = WebhookPayload {
+                direction: "incoming".to_string(),
+                boost: test_boost,
+            };
+
+            // Prepare headers
+            let mut headers = HeaderMap::new();
+
+            if let Ok(hdr) = HeaderValue::from_str("application/json") {
+                headers.insert(CONTENT_TYPE, hdr);
+            }
+
+            let user_agent = format!("Helipad/{}", state.version);
+            if let Ok(hdr) = HeaderValue::from_str(user_agent.as_str()) {
+                headers.insert(USER_AGENT, hdr);
+            }
+
+            if let Some(ref token) = trigger.action_webhook_token {
+                if !token.is_empty() {
+                    let bearer = format!("Bearer {}", token);
+                    if let Ok(hdr) = HeaderValue::from_str(&bearer) {
+                        headers.insert(AUTHORIZATION, hdr);
+                    }
+                }
+            }
+
+            // Build HTTP client
+            if let Ok(client) = reqwest::Client::builder()
+                .redirect(Policy::limited(5))
+                .build()
+            {
+                // Serialize test payload to JSON
+                if let Ok(json) = serde_json::to_string_pretty(&test_payload) {
+                    let result = client.post(url).body(json).headers(headers).send().await;
+
+                    match result {
+                        Ok(res) => {
+                            let status = res.status();
+                            if status == 200 {
+                                results.push(format!("Webhook: Sent successfully to {}", url));
+                            } else {
+                                results.push(format!("Webhook: Failed with status {}", status));
+                            }
+                        }
+                        Err(e) => {
+                            results.push(format!("Webhook: Failed - {}", e));
+                        }
+                    }
+                }
+            }
+        } else {
+            results.push("Webhook: No URL configured".to_string());
+        }
+    }
+
+    // Test TTS if enabled
+    if trigger.action_tts {
+        results.push("TTS: Test message sent to speech engine".to_string());
+    }
+
+    // Test sound - just report (actual sound playing happens client-side)
+    if trigger.action_sound {
+        if let Some(ref file) = trigger.action_sound_file {
+            results.push(format!("Sound: Playing {}", file));
+        } else {
+            results.push("Sound: No sound file configured".to_string());
+        }
+    }
+
+    // Test MIDI - report configuration (actual MIDI sending would happen elsewhere)
+    if trigger.action_midi {
+        let note = trigger.action_midi_note.unwrap_or(60);
+        let velocity = trigger.action_midi_velocity.unwrap_or(100);
+        let channel = trigger.action_midi_channel.unwrap_or(1);
+        let duration = trigger.action_midi_duration.unwrap_or(500);
+        results.push(format!(
+            "MIDI: Note {} velocity {} channel {} duration {}ms",
+            note, velocity, channel, duration
+        ));
+    }
+
+    // Test OSC - report configuration (actual OSC sending would happen elsewhere)
+    if trigger.action_osc {
+        let host = trigger.action_osc_host.as_deref().unwrap_or("localhost");
+        let port = trigger.action_osc_port.unwrap_or(8000);
+        let address = trigger.action_osc_address.as_deref().unwrap_or("/helipad/trigger");
+        results.push(format!(
+            "OSC: Sending to {}:{} address {}",
+            host, port, address
+        ));
+    }
+
+    if results.is_empty() {
+        results.push("No actions configured for this trigger".to_string());
+    }
+
+    println!("** trigger_settings_test({}) - {:?}", index, results);
+
+    (StatusCode::OK, results.join("\n")).into_response()
 }
 
 #[derive(Debug, Serialize, Deserialize)]

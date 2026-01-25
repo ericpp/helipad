@@ -16,6 +16,8 @@ $(document).ready(function () {
     let filters = {};
     let nostrPool = null;
     let nostrRelays = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.nostr.band"];
+    let midiAccess = null;
+    let triggers = [];
 
     let config = {
         'listUrl': '/api/v1/boosts',
@@ -438,16 +440,26 @@ $(document).ready(function () {
             this.running = true;
 
             const element = this.queue.shift();
-
-            if (settings.play_pew) {
-                await playPew(element);
-            }
-
-            // Announce via text-to-speech
             const type = config.singularName;
 
-            if (window.helipadTTS && settings && window.helipadTTS.shouldAnnounce(element, type, settings)) {
-                await window.helipadTTS.announceBoost(element, type);
+            // Get matching triggers for this boost
+            const matchingTriggers = getMatchingTriggers(element, type);
+
+            // If we have matching triggers, execute them instead of default behavior
+            if (matchingTriggers.length > 0) {
+                for (const trigger of matchingTriggers) {
+                    await executeTrigger(trigger, element);
+                }
+            } else {
+                // Default behavior when no triggers match
+                if (settings.play_pew) {
+                    await playPew(element);
+                }
+
+                // Announce via text-to-speech
+                if (window.helipadTTS && settings && window.helipadTTS.shouldAnnounce(element, type, settings)) {
+                    await window.helipadTTS.announceBoost(element, type);
+                }
             }
 
             this.running = false;
@@ -481,6 +493,37 @@ $(document).ready(function () {
         });
     }
 
+    async function initMIDI() {
+        midiAccess = await navigator.requestMIDIAccess();
+    }
+
+    function playMIDI(value) {
+        if (!midiAccess) return;
+
+        const outputs = Array.from(midiAccess.outputs.values());
+        const output = outputs[0];
+
+        console.log(output);
+        
+        if (output) {
+            const channel = 1;     // 1–16
+            const note = 60;       // Middle C
+            const velocity = 100;  // 0–127
+            const duration = 500;  // ms
+          
+            const noteOn = 0x90 + (channel - 1);
+            const noteOff = 0x80 + (channel - 1);
+          
+            // Note on
+            output.send([noteOn, note, velocity]);
+          
+            // Note off
+            setTimeout(() => {
+              output.send([noteOff, note, 0]);
+            }, duration);
+          }
+    }
+window.playMIDI = playMIDI;
     //Animate some confetti on the page with a given duration interval in milliseconds
     function shootConfetti(time) {
         startConfetti();
@@ -502,6 +545,156 @@ $(document).ready(function () {
         if (window.helipadTTS && settings) {
             window.helipadTTS.syncFromServer(settings);
         }
+    }
+
+    //Get enabled triggers
+    async function getTriggers() {
+        try {
+            triggers = await $.get(`/api/v1/triggers`);
+        } catch (e) {
+            console.error('Error fetching triggers:', e);
+            triggers = [];
+        }
+    }
+
+    // Check if a trigger matches a boost
+    function triggerMatches(trigger, element, boostType) {
+        // Check boost type
+        if (boostType === 'boost' && !trigger.on_boost) return false;
+        if (boostType === 'stream' && !trigger.on_stream) return false;
+        if (boostType === 'sent boost' && !trigger.on_sent) return false;
+        if (boostType === 'payment' && !trigger.on_invoice) return false;
+
+        const sats = Math.trunc(element.value_msat_total / 1000) || Math.trunc(element.value_msat / 1000) || 0;
+
+        // Check amount criteria
+        if (trigger.match_amount_equality) {
+            const satsStr = sats.toString();
+            const matchStr = trigger.match_amount.toString();
+
+            switch (trigger.match_amount_equality) {
+                case '<': if (sats >= trigger.match_amount) return false; break;
+                case '>=': if (sats < trigger.match_amount) return false; break;
+                case '=': if (sats !== trigger.match_amount) return false; break;
+                case '=~': if (!satsStr.includes(matchStr)) return false; break;
+                case '^=': if (!satsStr.startsWith(matchStr)) return false; break;
+                case '$=': if (!satsStr.endsWith(matchStr)) return false; break;
+            }
+        }
+
+        // Check sender criteria
+        if (trigger.match_sender) {
+            const sender = (element.sender || '').toLowerCase();
+            const match = trigger.match_sender.toLowerCase();
+
+            switch (trigger.match_sender_equality) {
+                case '=': if (sender !== match) return false; break;
+                case '=~': if (!sender.includes(match)) return false; break;
+            }
+        }
+
+        // Check app criteria
+        if (trigger.match_app) {
+            const app = (element.app || '').toLowerCase();
+            const match = trigger.match_app.toLowerCase();
+
+            switch (trigger.match_app_equality) {
+                case '=': if (app !== match) return false; break;
+                case '=~': if (!app.includes(match)) return false; break;
+            }
+        }
+
+        // Check podcast criteria
+        if (trigger.match_podcast) {
+            const podcast = (element.podcast || '').toLowerCase();
+            const match = trigger.match_podcast.toLowerCase();
+
+            switch (trigger.match_podcast_equality) {
+                case '=': if (podcast !== match) return false; break;
+                case '=~': if (!podcast.includes(match)) return false; break;
+            }
+        }
+
+        // Check episode criteria
+        if (trigger.match_episode) {
+            const episode = (element.episode || '').toLowerCase();
+            const match = trigger.match_episode.toLowerCase();
+
+            switch (trigger.match_episode_equality) {
+                case '=': if (episode !== match) return false; break;
+                case '=~': if (!episode.includes(match)) return false; break;
+            }
+        }
+
+        // Check message criteria
+        if (trigger.match_message) {
+            const message = (element.message || '').toLowerCase();
+            const match = trigger.match_message.toLowerCase();
+
+            switch (trigger.match_message_equality) {
+                case '=': if (message !== match) return false; break;
+                case '=~': if (!message.includes(match)) return false; break;
+            }
+        }
+
+        return true;
+    }
+
+    // Execute trigger actions
+    async function executeTrigger(trigger, element) {
+        const promises = [];
+
+        // Play sound
+        if (trigger.action_sound && trigger.action_sound_file) {
+            promises.push(new Promise((resolve) => {
+                const audio = new Audio('sound/' + trigger.action_sound_file + '?h=' + Date.now());
+                audio.addEventListener('ended', resolve);
+                audio.addEventListener('error', resolve);
+                audio.play().catch(resolve);
+            }));
+        }
+
+        // TTS
+        if (trigger.action_tts && window.helipadTTS) {
+            const script = trigger.action_tts_script || '{sender} sent {sats} sats';
+            const text = window.helipadTTS.formatText(element, config.singularName, script);
+            promises.push(window.helipadTTS.speak(text));
+        }
+
+        // MIDI
+        if (trigger.action_midi && midiAccess) {
+            const outputs = Array.from(midiAccess.outputs.values());
+            const output = outputs[0];
+
+            if (output) {
+                const channel = (trigger.action_midi_channel || 1);
+                const note = trigger.action_midi_note || 60;
+                const velocity = trigger.action_midi_velocity || 100;
+                const duration = trigger.action_midi_duration || 500;
+
+                const noteOn = 0x90 + (channel - 1);
+                const noteOff = 0x80 + (channel - 1);
+
+                output.send([noteOn, note, velocity]);
+
+                promises.push(new Promise((resolve) => {
+                    setTimeout(() => {
+                        output.send([noteOff, note, 0]);
+                        resolve();
+                    }, duration);
+                }));
+            }
+        }
+
+        // Wait for all actions to complete
+        if (promises.length > 0) {
+            await Promise.all(promises);
+        }
+    }
+
+    // Get matching triggers for a boost
+    function getMatchingTriggers(element, boostType) {
+        return triggers.filter(trigger => trigger.enabled && triggerMatches(trigger, element, boostType));
     }
 
     //Refresh the timestatmps of all the boosts on the list
@@ -1108,12 +1301,14 @@ $(document).ready(function () {
         //Get starting balance and index number
         await getNodeInfo();
         await getSettings();
+        await getTriggers();
         await getAppList();
         await getNumerologyList();
         renderBoostInfo();
         renderFilters();
         initWebsocket();
         initNostr();
+        initMIDI();
         getIndex();
     }
 

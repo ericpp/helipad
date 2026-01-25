@@ -347,6 +347,13 @@ async fn main() {
             .route("/settings/numerology/:idx", post(handler::numerology_settings_save))
             .route("/settings/numerology/:idx", delete(handler::numerology_settings_delete))
 
+            .route("/settings/triggers", get(handler::trigger_settings_list))
+            .route("/settings/triggers/:idx", patch(handler::trigger_settings_patch))
+            .route("/settings/triggers/:idx", get(handler::trigger_settings_load))
+            .route("/settings/triggers/:idx", post(handler::trigger_settings_save))
+            .route("/settings/triggers/:idx", delete(handler::trigger_settings_delete))
+            .route("/settings/triggers/:idx/test", post(handler::trigger_settings_test))
+
             .route("/settings/webhooks", get(handler::webhook_settings_list))
             .route("/settings/webhooks/:idx", get(handler::webhook_settings_load))
             .route("/settings/webhooks/:idx", post(handler::webhook_settings_save))
@@ -362,6 +369,7 @@ async fn main() {
             .nest("/api/v1", Router::new()
                 .route("/node_info", get(handler::api_v1_node_info))
                 .route("/settings", get(handler::api_v1_settings))
+                .route("/triggers", get(handler::api_v1_triggers))
                 .route("/boosts", get(handler::api_v1_boosts))
                 .route("/balance", get(handler::api_v1_balance))
                 .route("/streams", get(handler::api_v1_streams))
@@ -581,6 +589,9 @@ async fn process_invoice(
 
         //Send out webhooks (if any)
         send_webhooks(&db_filepath, &boost).await;
+
+        //Send out trigger webhooks (if any)
+        send_trigger_webhooks(&db_filepath, &boost).await;
     }
 }
 
@@ -694,6 +705,9 @@ async fn lnd_poller(helipad_config: HelipadConfig, ws_tx: Arc<broadcast::Sender<
 
                         //Send out webhooks (if any)
                         send_webhooks(&db_filepath, &boost).await;
+
+                        //Send out trigger webhooks (if any)
+                        send_trigger_webhooks(&db_filepath, &boost).await;
                     }
 
                     current_payment = payment.payment_index;
@@ -850,5 +864,179 @@ async fn send_webhooks(db_filepath: &String, boost: &dbif::BoostRecord) {
         if let Err(e) = dbif::set_webhook_last_request(db_filepath, webhook.index, successful, timestamp) {
             eprintln!("Error setting webhook last request status: {}", e);
         }
+    }
+}
+
+// Send trigger webhooks when a boost matches trigger criteria
+async fn send_trigger_webhooks(db_filepath: &String, boost: &dbif::BoostRecord) {
+    let triggers = match dbif::get_triggers_from_db(db_filepath, Some(true)) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error loading triggers from db: {:#?}", e);
+            return;
+        }
+    };
+
+    for trigger in triggers {
+        // Check if trigger matches the boost type
+        if boost.payment_info.is_some() && !trigger.on_sent {
+            continue; // sent payment
+        }
+
+        if boost.action == 1 && !trigger.on_stream {
+            continue; // stream
+        }
+
+        if boost.action == 2 && !trigger.on_boost {
+            continue; // boost
+        }
+
+        if boost.action == 4 && !trigger.on_auto {
+            continue; // auto
+        }
+
+        if boost.action == 5 && !trigger.on_invoice {
+            continue; // invoice
+        }
+
+        // Check amount criteria
+        let sats: u64 = if boost.value_msat_total > 0 {
+            (boost.value_msat_total / 1000).try_into().unwrap()
+        } else {
+            0
+        };
+
+        if !trigger.match_amount_equality.is_empty() {
+            let matches = match trigger.match_amount_equality.as_str() {
+                "<" => sats < trigger.match_amount,
+                ">=" => sats >= trigger.match_amount,
+                "=" => sats == trigger.match_amount,
+                "=~" => sats.to_string().contains(&trigger.match_amount.to_string()),
+                "^=" => sats.to_string().starts_with(&trigger.match_amount.to_string()),
+                "$=" => sats.to_string().ends_with(&trigger.match_amount.to_string()),
+                _ => true,
+            };
+            if !matches {
+                continue;
+            }
+        }
+
+        // Check sender criteria
+        if !trigger.match_sender.is_empty() {
+            let matches = match trigger.match_sender_equality.as_str() {
+                "=" => boost.sender.to_lowercase() == trigger.match_sender.to_lowercase(),
+                "=~" => boost.sender.to_lowercase().contains(&trigger.match_sender.to_lowercase()),
+                _ => true,
+            };
+            if !matches {
+                continue;
+            }
+        }
+
+        // Check app criteria
+        if !trigger.match_app.is_empty() {
+            let matches = match trigger.match_app_equality.as_str() {
+                "=" => boost.app.to_lowercase() == trigger.match_app.to_lowercase(),
+                "=~" => boost.app.to_lowercase().contains(&trigger.match_app.to_lowercase()),
+                _ => true,
+            };
+            if !matches {
+                continue;
+            }
+        }
+
+        // Check podcast criteria
+        if !trigger.match_podcast.is_empty() {
+            let matches = match trigger.match_podcast_equality.as_str() {
+                "=" => boost.podcast.to_lowercase() == trigger.match_podcast.to_lowercase(),
+                "=~" => boost.podcast.to_lowercase().contains(&trigger.match_podcast.to_lowercase()),
+                _ => true,
+            };
+            if !matches {
+                continue;
+            }
+        }
+
+        // Check episode criteria
+        if !trigger.match_episode.is_empty() {
+            let matches = match trigger.match_episode_equality.as_str() {
+                "=" => boost.episode.to_lowercase() == trigger.match_episode.to_lowercase(),
+                "=~" => boost.episode.to_lowercase().contains(&trigger.match_episode.to_lowercase()),
+                _ => true,
+            };
+            if !matches {
+                continue;
+            }
+        }
+
+        // Check message criteria
+        if !trigger.match_message.is_empty() {
+            let matches = match trigger.match_message_equality.as_str() {
+                "=" => boost.message.to_lowercase() == trigger.match_message.to_lowercase(),
+                "=~" => boost.message.to_lowercase().contains(&trigger.match_message.to_lowercase()),
+                _ => true,
+            };
+            if !matches {
+                continue;
+            }
+        }
+
+        // Trigger matched! Execute webhook action if enabled
+        if trigger.action_webhook {
+            if let Some(ref url) = trigger.action_webhook_url {
+                let mut headers = HeaderMap::new();
+
+                if let Ok(hdr) = HeaderValue::from_str("application/json") {
+                    headers.insert(CONTENT_TYPE, hdr);
+                }
+
+                let user_agent = format!("Helipad/{}", env!("CARGO_PKG_VERSION"));
+                if let Ok(hdr) = HeaderValue::from_str(user_agent.as_str()) {
+                    headers.insert(USER_AGENT, hdr);
+                }
+
+                if let Some(ref token) = trigger.action_webhook_token {
+                    if !token.is_empty() {
+                        let bearer = format!("Bearer {}", token);
+                        if let Ok(hdr) = HeaderValue::from_str(&bearer) {
+                            headers.insert(AUTHORIZATION, hdr);
+                        }
+                    }
+                }
+
+                if let Ok(client) = reqwest::Client::builder().redirect(Policy::limited(5)).build() {
+                    let direction = if boost.payment_info.is_some() {
+                        "outgoing".to_string()
+                    } else {
+                        "incoming".to_string()
+                    };
+
+                    let payload = WebhookPayload {
+                        direction,
+                        boost: boost.clone(),
+                    };
+
+                    if let Ok(json) = serde_json::to_string_pretty(&payload) {
+                        let result = client.post(url).body(json).headers(headers).send().await;
+
+                        match result {
+                            Ok(res) => {
+                                let status = res.status();
+                                if status == 200 {
+                                    println!("Trigger webhook sent to {}", url);
+                                } else {
+                                    eprintln!("Trigger webhook returned {}", status);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Trigger webhook error: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("Trigger '{}' matched boost from {}", trigger.name, boost.sender);
     }
 }

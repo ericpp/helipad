@@ -9,6 +9,7 @@ mod node_info;
 mod numerology;
 mod sent_boosts;
 mod settings;
+mod triggers;
 mod webhooks;
 
 pub use boosts::*;
@@ -17,6 +18,7 @@ pub use node_info::*;
 pub use numerology::*;
 pub use sent_boosts::*;
 pub use settings::*;
+pub use triggers::*;
 pub use webhooks::*;
 
 #[derive(Debug)]
@@ -102,6 +104,7 @@ pub fn create_database(filepath: &String) -> Result<bool, Box<dyn Error>> {
     create_settings_table(&conn)?;
     create_webhooks_table(&conn)?;
     create_jwt_secret_table(&conn)?;
+    create_triggers_table(&conn)?;
 
     Ok(true)
 }
